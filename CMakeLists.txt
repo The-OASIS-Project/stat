@@ -15,14 +15,24 @@ if(NOT CMAKE_BUILD_TYPE)
    set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Find required packages
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
+pkg_check_modules(JSONC REQUIRED json-c)
+
 # Include directories
-include_directories(include)
+include_directories(
+   include
+   ${MOSQUITTO_INCLUDE_DIRS}
+   ${JSONC_INCLUDE_DIRS}
+)
 
 # Source files
 set(SOURCES
    src/ark_detection.c
    src/i2c_utils.c
    src/ina238.c
+   src/mqtt_publisher.c
    src/oasis-stat.c
 )
 
@@ -32,13 +42,18 @@ set(HEADERS
    include/i2c_utils.h
    include/ina238.h
    include/ina238_registers.h
+   include/mqtt_publisher.h
 )
 
 # Create executable
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
-# Link libraries (if needed in the future)
-# target_link_libraries(${PROJECT_NAME} pthread)
+# Link libraries
+target_link_libraries(${PROJECT_NAME}
+   ${MOSQUITTO_LIBRARIES}
+   ${JSONC_LIBRARIES}
+   m   # Math library
+)
 
 # Install target
 install(TARGETS ${PROJECT_NAME}

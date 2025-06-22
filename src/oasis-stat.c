@@ -37,24 +37,17 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <signal.h>
+#include <time.h>
 
-#include "ina238.h"
 #include "ark_detection.h"
 #include "i2c_utils.h"
+#include "ina238.h"
+#include "mqtt_publisher.h"
 
 /* Application Configuration */
 #define DEFAULT_SAMPLING_INTERVAL_MS    1000
 #define MIN_SAMPLING_INTERVAL_MS        100
 #define MAX_SAMPLING_INTERVAL_MS        10000
-
-/* Battery Configuration */
-typedef struct {
-    float min_voltage;      // Empty battery voltage
-    float max_voltage;      // Full battery voltage
-    float warning_percent;  // Warning threshold percentage
-    float critical_percent; // Critical threshold percentage
-    const char *name;       // Battery type name
-} battery_config_t;
 
 /* Predefined battery configurations */
 static const battery_config_t battery_configs[] = {
@@ -89,6 +82,18 @@ static void print_measurements(const ina238_measurements_t *measurements,
                               const battery_config_t *battery);
 static float calculate_battery_percentage(float voltage, const battery_config_t *battery);
 static const char* get_battery_status(float percentage, const battery_config_t *battery);
+
+/**
+ * @brief Get current time in milliseconds
+ *
+ * @return unsigned long Current time in milliseconds
+ */
+static unsigned long get_time_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
+}
 
 /**
  * @brief Signal handler for graceful shutdown
@@ -149,12 +154,15 @@ static void print_usage(const char *prog_name)
     printf("      --list-batteries   Show available battery configurations\n");
     printf("  -h, --help             Show this help message\n");
     printf("  -v, --version          Show version information\n");
+    printf("MQTT Options:\n");
+    printf("  -H, --mqtt-host HOST   MQTT broker hostname (default: %s)\n", MQTT_DEFAULT_HOST);
+    printf("  -P, --mqtt-port PORT   MQTT broker port (default: %d)\n", MQTT_DEFAULT_PORT);
+    printf("  -T, --mqtt-topic TOPIC MQTT topic to publish to (default: %s)\n", MQTT_DEFAULT_TOPIC);
     printf("\nNote: If ARK Electronics Jetson Carrier is detected, optimized defaults are used.\n");
     printf("      Command-line options will override auto-detected settings.\n");
     printf("\nSTAT integrates with other OASIS modules:\n");
     printf("  • DAWN  - Voice interface and user interaction\n");
     printf("  • MIRAGE - Heads-up display and visual feedback\n");
-    printf("  • BEACON - System orchestration and coordination\n");
 }
 
 /**
@@ -269,22 +277,32 @@ int main(int argc, char *argv[])
     ina238_device_t ina238_dev;
     ark_board_info_t ark_info = {0};
     ina238_measurements_t measurements;
-    
+
+    /* MQTT configuration */
+    char mqtt_host[128] = MQTT_DEFAULT_HOST;
+    int mqtt_port = MQTT_DEFAULT_PORT;
+    char mqtt_topic[64] = MQTT_DEFAULT_TOPIC;
+    unsigned long last_mqtt_publish = 0;
+    unsigned int mqtt_interval_ms = 1000;  // 1 second between publishes
+
     /* Option parsing */
     static struct option long_options[] = {
-        {"bus",           required_argument, 0, 'b'},
-        {"address",       required_argument, 0, 'a'},
-        {"shunt",         required_argument, 0, 's'},
-        {"current",       required_argument, 0, 'c'},
-        {"interval",      required_argument, 0, 'i'},
-        {"battery",       required_argument, 0, 1000},
-        {"battery-min",   required_argument, 0, 1001},
-        {"battery-max",   required_argument, 0, 1002},
-        {"battery-warn",  required_argument, 0, 1003},
-        {"battery-crit",  required_argument, 0, 1004},
+        {"bus",            required_argument, 0, 'b'},
+        {"address",        required_argument, 0, 'a'},
+        {"shunt",          required_argument, 0, 's'},
+        {"current",        required_argument, 0, 'c'},
+        {"interval",       required_argument, 0, 'i'},
+        {"battery",        required_argument, 0, 1000},
+        {"battery-min",    required_argument, 0, 1001},
+        {"battery-max",    required_argument, 0, 1002},
+        {"battery-warn",   required_argument, 0, 1003},
+        {"battery-crit",   required_argument, 0, 1004},
         {"list-batteries", no_argument,      0, 1005},
-        {"help",          no_argument,       0, 'h'},
-        {"version",       no_argument,       0, 'v'},
+        {"mqtt-host",      required_argument, 0, 'H'},
+        {"mqtt-port",      required_argument, 0, 'P'},
+        {"mqtt-topic",     required_argument, 0, 'T'},
+        {"help",           no_argument,       0, 'h'},
+        {"version",        no_argument,       0, 'v'},
         {0, 0, 0, 0}
     };
     
@@ -307,7 +325,7 @@ int main(int argc, char *argv[])
     int opt;
     int option_index = 0;
     
-    while ((opt = getopt_long(argc, argv, "b:a:s:c:i:hv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "b:a:s:c:i:H:P:T:hv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'b':
                 i2c_bus = optarg;
@@ -373,6 +391,21 @@ int main(int argc, char *argv[])
             case 1005: // --list-batteries
                 print_battery_configs();
                 return EXIT_SUCCESS;
+            case 'H':  // mqtt-host
+                strncpy(mqtt_host, optarg, sizeof(mqtt_host) - 1);
+                mqtt_host[sizeof(mqtt_host) - 1] = '\0';
+                break;
+            case 'P':  // mqtt-port
+                mqtt_port = atoi(optarg);
+                if (mqtt_port <= 0 || mqtt_port > 65535) {
+                    fprintf(stderr, "Error: Invalid MQTT port number\n");
+                    return EXIT_FAILURE;
+                }
+                break;
+            case 'T':  // mqtt-topic
+                strncpy(mqtt_topic, optarg, sizeof(mqtt_topic) - 1);
+                mqtt_topic[sizeof(mqtt_topic) - 1] = '\0';
+                break;
             case 'v':
                 print_version();
                 return EXIT_SUCCESS;
@@ -384,7 +417,14 @@ int main(int argc, char *argv[])
                 return EXIT_FAILURE;
         }
     }
-    
+
+    /* Initialize MQTT */
+    if (mqtt_init(mqtt_host, mqtt_port, mqtt_topic) != 0) {
+        fprintf(stderr, "Warning: Failed to initialize MQTT. Continuing without MQTT support.\n");
+    } else {
+        printf("MQTT publishing enabled. Topic: %s\n", mqtt_topic);
+    }
+
     /* Validate custom battery configuration */
     if (custom_battery && battery_config.max_voltage <= battery_config.min_voltage) {
         fprintf(stderr, "Error: Battery max voltage must be greater than min voltage\n");
@@ -409,14 +449,26 @@ int main(int argc, char *argv[])
     
     /* Main monitoring loop */
     while (g_running) {
+        unsigned long current_time = get_time_ms();
+
         /* Read measurements from INA238 */
         if (ina238_read_measurements(&ina238_dev, &measurements) == 0) {
+            /* Calculate battery percentage here so it's available for both display and MQTT */
+            float battery_percentage = calculate_battery_percentage(measurements.bus_voltage, &battery_config);
+
+            /* Update display */
             print_measurements(&measurements, &ark_info, &battery_config);
+
+            /* Publish to MQTT if enough time has passed */
+            if (current_time - last_mqtt_publish >= mqtt_interval_ms) {
+                mqtt_publish_power_data(&measurements, battery_percentage);
+                last_mqtt_publish = current_time;
+            }
         } else {
             measurements.valid = false;
             print_measurements(&measurements, &ark_info, &battery_config);
         }
-        
+
         /* Sleep for specified interval */
         i2c_msleep(interval_ms);
     }
@@ -424,6 +476,7 @@ int main(int argc, char *argv[])
     /* Cleanup */
     printf("\n\n[STAT] Shutting down telemetry collection...\n");
     printf("[STAT] OFFLINE - Telemetry collection stopped\n");
+    mqtt_cleanup();
     ina238_close(&ina238_dev);
     
     return EXIT_SUCCESS;
