@@ -37,6 +37,7 @@
 #include <linux/i2c.h>
 
 #include "i2c_utils.h"
+#include "logging.h"
 
 /**
  * @brief Open I2C device
@@ -50,13 +51,13 @@ int i2c_open_device(i2c_device_t *device, const char *bus_path, uint8_t slave_ad
     /* Open I2C bus device */
     device->fd = open(bus_path, O_RDWR);
     if (device->fd < 0) {
-        fprintf(stderr, "Failed to open I2C bus %s: %s\n", bus_path, strerror(errno));
+        OLOG_ERROR("Failed to open I2C bus %s: %s", bus_path, strerror(errno));
         return -1;
     }
     
     /* Set I2C slave address */
     if (ioctl(device->fd, I2C_SLAVE, slave_addr) < 0) {
-        fprintf(stderr, "Failed to set I2C slave address 0x%02X: %s\n", 
+        OLOG_ERROR("Failed to set I2C slave address 0x%02X: %s\n",
                 slave_addr, strerror(errno));
         close(device->fd);
         device->fd = -1;
@@ -95,14 +96,14 @@ int i2c_read_register16(i2c_device_t *device, uint8_t reg_addr, uint16_t *value)
     
     /* Write register address */
     if (write(device->fd, &reg_addr, 1) != 1) {
-        fprintf(stderr, "Error writing register address 0x%02X: %s\n", 
+        OLOG_ERROR("Error writing register address 0x%02X: %s",
                 reg_addr, strerror(errno));
         return -1;
     }
     
     /* Read register value */
     if (read(device->fd, buf, 2) != 2) {
-        fprintf(stderr, "Error reading register 0x%02X: %s\n", 
+        OLOG_ERROR("Error reading register 0x%02X: %s",
                 reg_addr, strerror(errno));
         return -1;
     }
@@ -129,7 +130,7 @@ int i2c_write_register16(i2c_device_t *device, uint8_t reg_addr, uint16_t value)
     buf[2] = value & 0xFF;         /* Low byte */
     
     if (write(device->fd, buf, 3) != 3) {
-        fprintf(stderr, "Error writing to register 0x%02X: %s\n", 
+        OLOG_ERROR("Error writing to register 0x%02X: %s",
                 reg_addr, strerror(errno));
         return -1;
     }
@@ -167,7 +168,7 @@ int i2c_read_block_data(i2c_device_t *device, uint8_t reg_addr, uint8_t *data, u
     if (ioctl(device->fd, I2C_RDWR, &rdwr_data) < 0) {
         /* Fallback: try separate write/read operations */
         if (write(device->fd, &reg_addr, 1) != 1) {
-            fprintf(stderr, "Error writing register address 0x%02X: %s\n", 
+            OLOG_ERROR("Error writing register address 0x%02X: %s",
                     reg_addr, strerror(errno));
             return -1;
         }
@@ -176,7 +177,7 @@ int i2c_read_block_data(i2c_device_t *device, uint8_t reg_addr, uint8_t *data, u
         usleep(1000);  /* 1ms delay */
         
         if (read(device->fd, data, length) != length) {
-            fprintf(stderr, "Error reading %d bytes from register 0x%02X: %s\n", 
+            OLOG_ERROR("Error reading %d bytes from register 0x%02X: %s",
                     length, reg_addr, strerror(errno));
             return -1;
         }
@@ -198,14 +199,14 @@ int i2c_read_register24(i2c_device_t *device, uint8_t reg_addr, uint32_t *value)
     
     /* Write register address */
     if (write(device->fd, &reg_addr, 1) != 1) {
-        fprintf(stderr, "Error writing register address 0x%02X: %s\n", 
+        OLOG_ERROR("Error writing register address 0x%02X: %s",
                 reg_addr, strerror(errno));
         return -1;
     }
     
     /* Read 3 bytes */
     if (read(device->fd, buf, 3) != 3) {
-        fprintf(stderr, "Error reading 24-bit register 0x%02X: %s\n", 
+        OLOG_ERROR("Error reading 24-bit register 0x%02X: %s",
                 reg_addr, strerror(errno));
         return -1;
     }

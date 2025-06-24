@@ -31,6 +31,7 @@
 
 #include "ark_detection.h"
 #include "i2c_utils.h"
+#include "logging.h"
 
 /**
  * @brief Read serial number from ARK Jetson Carrier EEPROM
@@ -112,9 +113,9 @@ void ark_print_board_info(const ark_board_info_t *board_info)
     }
     
     if (board_info->detected) {
-        printf("ARK Jetson Carrier Serial: %s\n", board_info->serial_number);
+        OLOG_INFO("ARK Jetson Carrier Serial: %s", board_info->serial_number);
     } else {
-        printf("ARK Jetson Carrier: Not detected\n");
+        OLOG_INFO("ARK Jetson Carrier: Not detected");
     }
 }
 

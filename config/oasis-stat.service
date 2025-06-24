@@ -1,0 +1,30 @@
+[Unit]
+Description=OASIS STAT - System Telemetry and Analytics Tracker
+After=network.target mosquitto.service
+Wants=mosquitto.service
+Documentation=https://github.com/The-OASIS-Project/stat
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/oasis-stat --service --mqtt-host ${MQTT_HOST} --mqtt-port ${MQTT_PORT} --mqtt-topic ${MQTT_TOPIC}
+
+# Import configuration from /etc/oasis/stat.conf
+EnvironmentFile=/etc/oasis/stat.conf
+
+# Restart settings
+Restart=on-failure
+RestartSec=5s
+
+# Security settings
+User=oasis
+Group=oasis
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+# Allow access to hardware
+SupplementaryGroups=i2c
+
+[Install]
+WantedBy=multi-user.target

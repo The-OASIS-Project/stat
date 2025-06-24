@@ -42,6 +42,7 @@
 #include "ark_detection.h"
 #include "i2c_utils.h"
 #include "ina238.h"
+#include "logging.h"
 #include "mqtt_publisher.h"
 
 /* Application Configuration */
@@ -152,6 +153,7 @@ static void print_usage(const char *prog_name)
     printf("      --battery-warn %%   Battery warning threshold percent (default: 20)\n");
     printf("      --battery-crit %%   Battery critical threshold percent (default: 10)\n");
     printf("      --list-batteries   Show available battery configurations\n");
+    printf("  -e, --service          Run in service mode (use with systemd)\n");
     printf("  -h, --help             Show this help message\n");
     printf("  -v, --version          Show version information\n");
     printf("MQTT Options:\n");
@@ -268,6 +270,7 @@ int main(int argc, char *argv[])
     float r_shunt = DEFAULT_SHUNT;
     float max_current = DEFAULT_MAX_CURRENT;
     int interval_ms = DEFAULT_SAMPLING_INTERVAL_MS;
+    bool service_mode = false;
     
     /* Battery configuration */
     battery_config_t battery_config = battery_configs[1];  // Default to 5S_Li-ion
@@ -297,10 +300,11 @@ int main(int argc, char *argv[])
         {"battery-max",    required_argument, 0, 1002},
         {"battery-warn",   required_argument, 0, 1003},
         {"battery-crit",   required_argument, 0, 1004},
-        {"list-batteries", no_argument,      0, 1005},
+        {"list-batteries", no_argument,       0, 1005},
         {"mqtt-host",      required_argument, 0, 'H'},
         {"mqtt-port",      required_argument, 0, 'P'},
         {"mqtt-topic",     required_argument, 0, 'T'},
+        {"service",        no_argument,       0, 'e'},
         {"help",           no_argument,       0, 'h'},
         {"version",        no_argument,       0, 'v'},
         {0, 0, 0, 0}
@@ -308,24 +312,22 @@ int main(int argc, char *argv[])
     
     /* Try to detect ARK Electronics Jetson Carrier */
     if (ark_detect_jetson_carrier(&ark_info) == 0) {
-        printf("ARK Electronics Jetson Carrier detected!\n");
+        OLOG_INFO("ARK Electronics Jetson Carrier detected!");
         ark_print_board_info(&ark_info);
         
         /* Use ARK-specific defaults */
         ark_get_ina238_defaults(&ark_info, &i2c_bus, &r_shunt, &max_current);
         
-        printf("Using ARK Jetson Carrier defaults:\n");
-        printf("  I2C Bus: %s\n", i2c_bus);
-        printf("  Shunt: %.3f Ω\n", r_shunt);
-        printf("  Max Current: %.1f A\n", max_current);
-        printf("\n");
+        OLOG_INFO("Using ARK Jetson Carrier defaults:");
+        OLOG_INFO("  I2C Bus: %s", i2c_bus);
+        OLOG_INFO("  Shunt: %.3f Ω", r_shunt);
     }
     
     /* Parse command line arguments (can override auto-detected defaults) */
     int opt;
     int option_index = 0;
     
-    while ((opt = getopt_long(argc, argv, "b:a:s:c:i:H:P:T:hv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "b:a:s:c:i:H:P:T:ehv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'b':
                 i2c_bus = optarg;
@@ -336,21 +338,21 @@ int main(int argc, char *argv[])
             case 's':
                 r_shunt = atof(optarg);
                 if (r_shunt <= 0.0f) {
-                    fprintf(stderr, "Error: Shunt resistance must be positive\n");
+                    OLOG_ERROR("Error: Shunt resistance must be positive");
                     return EXIT_FAILURE;
                 }
                 break;
             case 'c':
                 max_current = atof(optarg);
                 if (max_current <= 0.0f) {
-                    fprintf(stderr, "Error: Maximum current must be positive\n");
+                    OLOG_ERROR("Error: Maximum current must be positive");
                     return EXIT_FAILURE;
                 }
                 break;
             case 'i':
                 interval_ms = atoi(optarg);
                 if (interval_ms < MIN_SAMPLING_INTERVAL_MS || interval_ms > MAX_SAMPLING_INTERVAL_MS) {
-                    fprintf(stderr, "Error: Sampling interval must be between %d and %d ms\n",
+                    OLOG_ERROR("Error: Sampling interval must be between %d and %d ms",
                             MIN_SAMPLING_INTERVAL_MS, MAX_SAMPLING_INTERVAL_MS);
                     return EXIT_FAILURE;
                 }
@@ -366,8 +368,8 @@ int main(int argc, char *argv[])
                         }
                     }
                     if (!found) {
-                        fprintf(stderr, "Error: Unknown battery type '%s'\n", optarg);
-                        printf("Use --list-batteries to see available types\n");
+                        OLOG_ERROR("Error: Unknown battery type '%s'", optarg);
+                        OLOG_ERROR("Use --list-batteries to see available types");
                         return EXIT_FAILURE;
                     }
                 }
@@ -398,13 +400,16 @@ int main(int argc, char *argv[])
             case 'P':  // mqtt-port
                 mqtt_port = atoi(optarg);
                 if (mqtt_port <= 0 || mqtt_port > 65535) {
-                    fprintf(stderr, "Error: Invalid MQTT port number\n");
+                    OLOG_ERROR("Error: Invalid MQTT port number");
                     return EXIT_FAILURE;
                 }
                 break;
             case 'T':  // mqtt-topic
                 strncpy(mqtt_topic, optarg, sizeof(mqtt_topic) - 1);
                 mqtt_topic[sizeof(mqtt_topic) - 1] = '\0';
+                break;
+            case 'e':  // service mode
+                service_mode = true;
                 break;
             case 'v':
                 print_version();
@@ -418,16 +423,26 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* Initialize logging based on mode */
+    if (service_mode) {
+        // Initialize syslog for service mode
+        init_syslog("oasis-stat");
+        OLOG_INFO("Starting OASIS STAT in service mode");
+    } else {
+        // Initialize console logging for interactive mode
+        init_logging(NULL, LOG_TO_CONSOLE);
+    }
+
     /* Initialize MQTT */
     if (mqtt_init(mqtt_host, mqtt_port, mqtt_topic) != 0) {
-        fprintf(stderr, "Warning: Failed to initialize MQTT. Continuing without MQTT support.\n");
+        OLOG_WARNING("Warning: Failed to initialize MQTT. Continuing without MQTT support.");
     } else {
-        printf("MQTT publishing enabled. Topic: %s\n", mqtt_topic);
+        OLOG_INFO("MQTT publishing enabled. Topic: %s", mqtt_topic);
     }
 
     /* Validate custom battery configuration */
     if (custom_battery && battery_config.max_voltage <= battery_config.min_voltage) {
-        fprintf(stderr, "Error: Battery max voltage must be greater than min voltage\n");
+        OLOG_ERROR("Error: Battery max voltage must be greater than min voltage");
         return EXIT_FAILURE;
     }
     
@@ -437,15 +452,12 @@ int main(int argc, char *argv[])
     
     /* Initialize the INA238 device */
     if (ina238_init(&ina238_dev, i2c_bus, i2c_addr, r_shunt, max_current) < 0) {
-        fprintf(stderr, "Error: Failed to initialize INA238 device\n");
+        OLOG_ERROR("Error: Failed to initialize INA238 device");
         return EXIT_FAILURE;
     }
     
     /* Print device status */
     ina238_print_status(&ina238_dev);
-    
-    /* Print application header */
-    print_header(&ark_info, &battery_config);
     
     /* Main monitoring loop */
     while (g_running) {
@@ -456,8 +468,10 @@ int main(int argc, char *argv[])
             /* Calculate battery percentage here so it's available for both display and MQTT */
             float battery_percentage = calculate_battery_percentage(measurements.bus_voltage, &battery_config);
 
-            /* Update display */
-            print_measurements(&measurements, &ark_info, &battery_config);
+            if (!service_mode) {
+                /* Update display */
+                print_measurements(&measurements, &ark_info, &battery_config);
+            }
 
             /* Publish to MQTT if enough time has passed */
             if (current_time - last_mqtt_publish >= mqtt_interval_ms) {
@@ -474,10 +488,11 @@ int main(int argc, char *argv[])
     }
     
     /* Cleanup */
-    printf("\n\n[STAT] Shutting down telemetry collection...\n");
-    printf("[STAT] OFFLINE - Telemetry collection stopped\n");
+    OLOG_INFO("[STAT] Shutting down telemetry collection...");
+    OLOG_INFO("[STAT] OFFLINE - Telemetry collection stopped");
     mqtt_cleanup();
     ina238_close(&ina238_dev);
+    close_logging();
     
     return EXIT_SUCCESS;
 }

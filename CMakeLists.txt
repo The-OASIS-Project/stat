@@ -32,6 +32,7 @@ set(SOURCES
    src/ark_detection.c
    src/i2c_utils.c
    src/ina238.c
+   src/logging.c
    src/mqtt_publisher.c
    src/oasis-stat.c
 )
@@ -42,6 +43,7 @@ set(HEADERS
    include/i2c_utils.h
    include/ina238.h
    include/ina238_registers.h
+   include/logging.h
    include/mqtt_publisher.h
 )
 

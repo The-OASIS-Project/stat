@@ -31,6 +31,7 @@
 #include "ina238.h"
 #include "ina238_registers.h"
 #include "i2c_utils.h"
+#include "logging.h"
 
 /* Private function prototypes */
 static int ina238_probe(ina238_device_t *dev);
@@ -52,25 +53,25 @@ static int ina238_probe(ina238_device_t *dev)
     
     /* Verify manufacturer ID */
     if (i2c_read_register16(&i2c_dev, INA238_REG_MANUFACTURER_ID, &value) < 0) {
-        fprintf(stderr, "Failed to read manufacturer ID\n");
+        OLOG_ERROR("Failed to read manufacturer ID");
         return -1;
     }
     
     if (value != INA238_MFG_ID_TI) {
-        fprintf(stderr, "Invalid manufacturer ID: 0x%04X (expected 0x%04X)\n", 
+        OLOG_ERROR("Invalid manufacturer ID: 0x%04X (expected 0x%04X)",
                 value, INA238_MFG_ID_TI);
         return -1;
     }
     
     /* Verify device ID */
     if (i2c_read_register16(&i2c_dev, INA238_REG_DEVICE_ID, &value) < 0) {
-        fprintf(stderr, "Failed to read device ID\n");
+        OLOG_ERROR("Failed to read device ID");
         return -1;
     }
     
     uint16_t device_id = INA238_DEVICEID(value);
     if (device_id != INA238_MFG_DIE) {
-        fprintf(stderr, "Invalid device ID: 0x%04X (expected 0x%04X)\n", 
+        OLOG_ERROR("Invalid device ID: 0x%04X (expected 0x%04X)",
                 device_id, INA238_MFG_DIE);
         return -1;
     }
@@ -91,7 +92,7 @@ static int ina238_reset_device(ina238_device_t *dev)
     
     /* Perform ADC reset */
     if (i2c_write_register16(&i2c_dev, INA238_REG_CONFIG, CONFIG_ADC_RESET_BIT) < 0) {
-        fprintf(stderr, "Failed to reset device\n");
+        OLOG_ERROR("Failed to reset device");
         return -1;
     }
     
@@ -114,19 +115,19 @@ static int ina238_configure_device(ina238_device_t *dev)
     
     /* Set shunt calibration */
     if (i2c_write_register16(&i2c_dev, INA238_REG_SHUNT_CAL, dev->shunt_calibration) < 0) {
-        fprintf(stderr, "Failed to set shunt calibration\n");
+        OLOG_ERROR("Failed to set shunt calibration");
         return -1;
     }
     
     /* Set CONFIG register with range setting */
     if (i2c_write_register16(&i2c_dev, INA238_REG_CONFIG, dev->range) < 0) {
-        fprintf(stderr, "Failed to set CONFIG register\n");
+        OLOG_ERROR("Failed to set CONFIG register");
         return -1;
     }
     
     /* Configure ADC for continuous mode operation */
     if (i2c_write_register16(&i2c_dev, INA238_REG_ADC_CONFIG, INA238_DEFAULT_ADC_CONFIG) < 0) {
-        fprintf(stderr, "Failed to set ADC configuration\n");
+        OLOG_ERROR("Failed to set ADC configuration");
         return -1;
     }
     
@@ -165,7 +166,7 @@ int ina238_init(ina238_device_t *dev, const char *i2c_bus, uint8_t i2c_addr,
     
     /* Open I2C device */
     if (i2c_open_device(&i2c_dev, i2c_bus, i2c_addr) < 0) {
-        fprintf(stderr, "Failed to open I2C device %s at address 0x%02X\n", 
+        OLOG_ERROR("Failed to open I2C device %s at address 0x%02X",
                 i2c_bus, i2c_addr);
         return -1;
     }

@@ -1,11 +1,25 @@
 /**
  * @file mqtt_publisher.c
  * @brief MQTT Publishing Functions for OASIS STAT
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * By contributing to this project, you agree to license your contributions
+ * under the GPLv3 (or any later version) or any future licenses chosen by
+ * the project author(s). Contributions include any modifications,
+ * enhancements, or additions to the project. These contributions become
+ * part of the project and are adopted by the project author(s).
  */
 
 #include <stdio.h>
@@ -16,6 +30,7 @@
 #include <json-c/json.h>
 
 #include "mqtt_publisher.h"
+#include "logging.h"
 #include "ina238.h"
 
 /* Forward declaration of battery_config_t */
@@ -32,12 +47,12 @@ void on_connect(struct mosquitto *mosq, void *obj, int reason_code)
    (void)obj; /* Mark parameter as intentionally unused */
    
    if(reason_code != 0){
-      fprintf(stderr, "MQTT connection failed: %s\n", mosquitto_strerror(reason_code));
+      OLOG_ERROR("MQTT connection failed: %s", mosquitto_strerror(reason_code));
       mosquitto_disconnect(mosq);
       return;
    }
 
-   printf("MQTT: Connected to broker\n");
+   OLOG_INFO("MQTT: Connected to broker\n");
 }
 
 void on_disconnect(struct mosquitto *mosq, void *obj, int reason_code)
@@ -45,7 +60,7 @@ void on_disconnect(struct mosquitto *mosq, void *obj, int reason_code)
    (void)mosq; /* Mark parameter as intentionally unused */
    (void)obj;  /* Mark parameter as intentionally unused */
    
-   fprintf(stderr, "MQTT: Disconnected from broker: %s\n", mosquitto_strerror(reason_code));
+   OLOG_ERROR("MQTT: Disconnected from broker: %s", mosquitto_strerror(reason_code));
 }
 
 int mqtt_init(const char *host, int port, const char *topic)
@@ -62,7 +77,7 @@ int mqtt_init(const char *host, int port, const char *topic)
    /* Create a new mosquitto client instance */
    mosq = mosquitto_new(NULL, true, NULL);
    if (!mosq) {
-      fprintf(stderr, "MQTT: Failed to create client instance\n");
+      OLOG_ERROR("MQTT: Failed to create client instance");
       return -1;
    }
 
@@ -71,10 +86,10 @@ int mqtt_init(const char *host, int port, const char *topic)
    mosquitto_disconnect_callback_set(mosq, on_disconnect);
 
    /* Connect to broker */
-   printf("MQTT: Connecting to broker at %s:%d\n", host, port);
+   OLOG_INFO("MQTT: Connecting to broker at %s:%d", host, port);
    rc = mosquitto_connect(mosq, host, port, 60);
    if (rc != MOSQ_ERR_SUCCESS) {
-      fprintf(stderr, "MQTT: Unable to connect to broker: %s\n", mosquitto_strerror(rc));
+      OLOG_ERROR("MQTT: Unable to connect to broker: %s", mosquitto_strerror(rc));
       mosquitto_destroy(mosq);
       mosq = NULL;
       return -1;
@@ -83,7 +98,7 @@ int mqtt_init(const char *host, int port, const char *topic)
    /* Start the mosquitto loop in a background thread */
    rc = mosquitto_loop_start(mosq);
    if (rc != MOSQ_ERR_SUCCESS) {
-      fprintf(stderr, "MQTT: Unable to start loop: %s\n", mosquitto_strerror(rc));
+      OLOG_ERROR("MQTT: Unable to start loop: %s", mosquitto_strerror(rc));
       mosquitto_disconnect(mosq);
       mosquitto_destroy(mosq);
       mosq = NULL;
@@ -138,7 +153,7 @@ int mqtt_publish_power_data(const ina238_measurements_t *measurements,
    /* Publish to MQTT */
    int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
    if (rc != MOSQ_ERR_SUCCESS) {
-      fprintf(stderr, "MQTT: Failed to publish message: %s\n", mosquitto_strerror(rc));
+      OLOG_ERROR("MQTT: Failed to publish message: %s", mosquitto_strerror(rc));
    }
 
    /* Free JSON object */
