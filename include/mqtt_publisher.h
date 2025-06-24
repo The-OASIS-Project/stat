@@ -62,6 +62,31 @@ int mqtt_publish_power_data(const ina238_measurements_t *measurements,
                           float battery_percentage);
 
 /**
+ * @brief Publish CPU monitoring data to MQTT
+ *
+ * @param cpu_usage CPU usage percentage (0-100)
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_cpu_data(float cpu_usage);
+
+/**
+ * @brief Publish memory monitoring data to MQTT
+ *
+ * @param memory_usage Memory usage percentage (0-100)
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_memory_data(float memory_usage);
+
+/**
+ * @brief Publish fan monitoring data to MQTT
+ *
+ * @param rpm Fan speed in RPM
+ * @param load_percent Fan load percentage (0-100)
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_fan_data(int rpm, int load_percent);
+
+/**
  * @brief Clean up MQTT resources
  */
 void mqtt_cleanup(void);

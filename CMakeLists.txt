@@ -30,9 +30,12 @@ include_directories(
 # Source files
 set(SOURCES
    src/ark_detection.c
+   src/cpu_monitor.c
+   src/fan_monitor.c
    src/i2c_utils.c
    src/ina238.c
    src/logging.c
+   src/memory_monitor.c
    src/mqtt_publisher.c
    src/oasis-stat.c
 )
@@ -40,10 +43,13 @@ set(SOURCES
 # Header files (for IDE support)
 set(HEADERS
    include/ark_detection.h
+   include/cpu_monitor.h
+   include/fan_monitor.h
    include/i2c_utils.h
    include/ina238.h
    include/ina238_registers.h
    include/logging.h
+   include/memory_monitor.h
    include/mqtt_publisher.h
 )
 

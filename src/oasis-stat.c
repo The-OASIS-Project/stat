@@ -40,9 +40,12 @@
 #include <time.h>
 
 #include "ark_detection.h"
+#include "cpu_monitor.h"
+#include "fan_monitor.h"
 #include "i2c_utils.h"
 #include "ina238.h"
 #include "logging.h"
+#include "memory_monitor.h"
 #include "mqtt_publisher.h"
 
 /* Application Configuration */
@@ -69,6 +72,15 @@ static const battery_config_t battery_configs[] = {
 #define STAT_VERSION_MINOR 0
 #define STAT_VERSION_PATCH 0
 
+/* New structures to hold system metrics */
+typedef struct {
+    float cpu_usage;
+    float memory_usage;
+    int fan_rpm;
+    int fan_load;
+    bool fan_available;
+} system_metrics_t;
+
 /* Global Variables */
 static volatile bool g_running = true;
 
@@ -78,23 +90,12 @@ static void print_version(void);
 static void print_battery_configs(void);
 static void signal_handler(int signal);
 static void print_header(const ark_board_info_t *ark_info, const battery_config_t *battery);
-static void print_measurements(const ina238_measurements_t *measurements, 
+static void print_measurements(const ina238_measurements_t *measurements,
                               const ark_board_info_t *ark_info,
-                              const battery_config_t *battery);
+                              const battery_config_t *battery,
+                              const system_metrics_t *sys_metrics);
 static float calculate_battery_percentage(float voltage, const battery_config_t *battery);
 static const char* get_battery_status(float percentage, const battery_config_t *battery);
-
-/**
- * @brief Get current time in milliseconds
- *
- * @return unsigned long Current time in milliseconds
- */
-static unsigned long get_time_ms(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
-}
 
 /**
  * @brief Signal handler for graceful shutdown
@@ -223,38 +224,54 @@ static const char* get_battery_status(float percentage, const battery_config_t *
 /**
  * @brief Print current measurements to screen
  */
-static void print_measurements(const ina238_measurements_t *measurements, 
+static void print_measurements(const ina238_measurements_t *measurements,
                               const ark_board_info_t *ark_info,
-                              const battery_config_t *battery)
+                              const battery_config_t *battery,
+                              const system_metrics_t *sys_metrics)
 {
     printf("\033[2J\033[H");  // Clear screen and move cursor to top
-    
+
     /* Print header */
     print_header(ark_info, battery);
-    
+
     /* Print telemetry data */
     printf("┌─────────────────────────────────────────────────────────────┐\n");
-    printf("│                    POWER TELEMETRY DATA\t\t      │\n");
+    printf("│                  SYSTEM TELEMETRY DATA                      │\n");
     printf("├─────────────────────────────────────────────────────────────┤\n");
-    
+
+    /* Power section */
+    printf("│ POWER                                                       │\n");
+
     if (measurements->valid) {
-        printf("│ Bus Voltage:    %8.3f V\t\t\t\t      │\n", measurements->bus_voltage);
-        printf("│ Current:        %8.3f A\t\t\t\t      │\n", measurements->current);
-        printf("│ Power:          %8.3f W\t\t\t\t      │\n", measurements->power);
-        printf("│ Temperature:    %8.2f °C (INA238 die)\t\t      │\n", measurements->temperature);
-        printf("│                                                             │\n");
-        
+        printf("│ Bus Voltage:      %8.3f V                                │\n", measurements->bus_voltage);
+        printf("│ Current:          %8.3f A                                │\n", measurements->current);
+        printf("│ Power:            %8.3f W                                │\n", measurements->power);
+        printf("│ Temperature:      %8.2f °C (INA238 die)                  │\n", measurements->temperature);
+
         /* Battery status */
         float battery_percent = calculate_battery_percentage(measurements->bus_voltage, battery);
         const char *battery_status = get_battery_status(battery_percent, battery);
-        
-        printf("│ Battery Level:  %8.1f %%\t\t\t\t      │\n", battery_percent);
-        printf("│ Battery Status: %-8s\t\t\t\t      │\n", battery_status);
+
+        printf("│ Battery Level:    %8.1f %%                                │\n", battery_percent);
+        printf("│ Battery Status:   %-8s                                  │\n", battery_status);
     } else {
-        printf("│ ERROR: Unable to read telemetry data                   │\n");
-        printf("│ Check I2C connection and device power                  │\n");
+        printf("│ ERROR: Unable to read power telemetry data                │\n");
+        printf("│ Check I2C connection and device power                     │\n");
     }
-    
+
+    printf("│                                                             │\n");
+
+    /* System section */
+    printf("│ SYSTEM                                                      │\n");
+    printf("│ CPU Usage:        %8.1f %%                                │\n", sys_metrics->cpu_usage);
+    printf("│ Memory Usage:     %8.1f %%                                │\n", sys_metrics->memory_usage);
+    if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
+        printf("│ Fan Speed:        %8d RPM (%d%%)                        │\n",
+               sys_metrics->fan_rpm, sys_metrics->fan_load);
+    } else {
+        printf("│ Fan Speed:        Not available                           │\n");
+    }
+
     printf("└─────────────────────────────────────────────────────────────┘\n");
     printf("\n[STAT] Telemetry broadcast ready for OASIS network consumption\n");
 }
@@ -277,16 +294,15 @@ int main(int argc, char *argv[])
     bool custom_battery = false;
     
     /* Device and board information */
-    ina238_device_t ina238_dev;
+    ina238_device_t ina238_dev= {0};
     ark_board_info_t ark_info = {0};
-    ina238_measurements_t measurements;
+    ina238_measurements_t measurements = {0};
+    system_metrics_t system_metrics = {0};
 
     /* MQTT configuration */
     char mqtt_host[128] = MQTT_DEFAULT_HOST;
     int mqtt_port = MQTT_DEFAULT_PORT;
     char mqtt_topic[64] = MQTT_DEFAULT_TOPIC;
-    unsigned long last_mqtt_publish = 0;
-    unsigned int mqtt_interval_ms = 1000;  // 1 second between publishes
 
     /* Option parsing */
     static struct option long_options[] = {
@@ -449,11 +465,30 @@ int main(int argc, char *argv[])
     /* Initialize signal handler for graceful shutdown */
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    
+
     /* Initialize the INA238 device */
     if (ina238_init(&ina238_dev, i2c_bus, i2c_addr, r_shunt, max_current) < 0) {
         OLOG_ERROR("Error: Failed to initialize INA238 device");
         return EXIT_FAILURE;
+    }
+
+    if (cpu_monitor_init() == 0) {
+        OLOG_INFO("CPU monitoring initialized");
+    } else {
+        OLOG_WARNING("CPU monitoring initialization failed");
+    }
+
+    if (memory_monitor_init() == 0) {
+        OLOG_INFO("Memory monitoring initialized");
+    } else {
+        OLOG_WARNING("Memory monitoring initialization failed");
+    }
+
+    if (fan_monitor_init() == 0) {
+        system_metrics.fan_available = true;
+        OLOG_INFO("Fan monitoring initialized");
+    } else {
+        OLOG_WARNING("Fan monitoring initialization failed");
     }
     
     /* Print device status */
@@ -461,26 +496,38 @@ int main(int argc, char *argv[])
     
     /* Main monitoring loop */
     while (g_running) {
-        unsigned long current_time = get_time_ms();
+        float battery_percentage = 0.0F;
 
         /* Read measurements from INA238 */
-        if (ina238_read_measurements(&ina238_dev, &measurements) == 0) {
-            /* Calculate battery percentage here so it's available for both display and MQTT */
-            float battery_percentage = calculate_battery_percentage(measurements.bus_voltage, &battery_config);
-
-            if (!service_mode) {
-                /* Update display */
-                print_measurements(&measurements, &ark_info, &battery_config);
-            }
-
-            /* Publish to MQTT if enough time has passed */
-            if (current_time - last_mqtt_publish >= mqtt_interval_ms) {
-                mqtt_publish_power_data(&measurements, battery_percentage);
-                last_mqtt_publish = current_time;
-            }
-        } else {
+        if (ina238_read_measurements(&ina238_dev, &measurements) != 0) {
             measurements.valid = false;
-            print_measurements(&measurements, &ark_info, &battery_config);
+        }
+
+        /* Calculate battery percentage here so it's available for both display and MQTT */
+        if (measurements.valid) {
+            battery_percentage = calculate_battery_percentage(measurements.bus_voltage, &battery_config);
+            mqtt_publish_power_data(&measurements, battery_percentage);
+        }
+
+        /* Read CPU usage */
+        system_metrics.cpu_usage = cpu_monitor_get_usage();
+        mqtt_publish_cpu_data(system_metrics.cpu_usage);
+
+        /* Read memory usage */
+        system_metrics.memory_usage = memory_monitor_get_usage();
+        mqtt_publish_memory_data(system_metrics.memory_usage);
+
+        /* Read fan metrics */
+        if (system_metrics.fan_available) {
+            system_metrics.fan_rpm = fan_monitor_get_rpm();
+            system_metrics.fan_load = fan_monitor_get_load_percent();
+
+            mqtt_publish_fan_data(system_metrics.fan_rpm, system_metrics.fan_load);
+        }
+
+        if (!service_mode) {
+            /* Update display */
+            print_measurements(&measurements, &ark_info, &battery_config, &system_metrics);
         }
 
         /* Sleep for specified interval */
@@ -490,6 +537,9 @@ int main(int argc, char *argv[])
     /* Cleanup */
     OLOG_INFO("[STAT] Shutting down telemetry collection...");
     OLOG_INFO("[STAT] OFFLINE - Telemetry collection stopped");
+    cpu_monitor_cleanup();
+    memory_monitor_cleanup();
+    fan_monitor_cleanup();
     mqtt_cleanup();
     ina238_close(&ina238_dev);
     close_logging();

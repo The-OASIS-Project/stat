@@ -60,7 +60,11 @@ void on_disconnect(struct mosquitto *mosq, void *obj, int reason_code)
    (void)mosq; /* Mark parameter as intentionally unused */
    (void)obj;  /* Mark parameter as intentionally unused */
    
-   OLOG_ERROR("MQTT: Disconnected from broker: %s", mosquitto_strerror(reason_code));
+   if (mqtt_initialized) {
+       OLOG_ERROR("MQTT: Disconnected from broker: %s", mosquitto_strerror(reason_code));
+   } else {
+       OLOG_INFO("MQTT: Disconnected from broker: %s", mosquitto_strerror(reason_code));
+   }
 }
 
 int mqtt_init(const char *host, int port, const char *topic)
@@ -162,8 +166,118 @@ int mqtt_publish_power_data(const ina238_measurements_t *measurements,
    return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
 }
 
+/**
+ * @brief Publish CPU monitoring data to MQTT
+ *
+ * @param cpu_usage CPU usage percentage (0-100)
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_cpu_data(float cpu_usage)
+{
+   if (!mqtt_initialized || !mosq) {
+      return -1;
+   }
+
+   /* Create JSON object */
+   struct json_object *root = json_object_new_object();
+
+   /* Add device type and measurements */
+   json_object_object_add(root, "device", json_object_new_string("CPU"));
+   json_object_object_add(root, "usage", json_object_new_double(cpu_usage));
+
+   /* Convert to JSON string */
+   const char *json_str = json_object_to_json_string(root);
+
+   /* Publish to MQTT */
+   int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
+   if (rc != MOSQ_ERR_SUCCESS) {
+      OLOG_ERROR("MQTT: Failed to publish CPU message: %s", mosquitto_strerror(rc));
+   }
+
+   /* Free JSON object */
+   json_object_put(root);
+
+   return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
+}
+
+/**
+ * @brief Publish memory monitoring data to MQTT
+ *
+ * @param memory_usage Memory usage percentage (0-100)
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_memory_data(float memory_usage)
+{
+   if (!mqtt_initialized || !mosq) {
+      return -1;
+   }
+
+   /* Create JSON object */
+   struct json_object *root = json_object_new_object();
+
+   /* Add device type and measurements */
+   json_object_object_add(root, "device", json_object_new_string("Memory"));
+   json_object_object_add(root, "usage", json_object_new_double(memory_usage));
+
+   /* Convert to JSON string */
+   const char *json_str = json_object_to_json_string(root);
+
+   /* Publish to MQTT */
+   int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
+   if (rc != MOSQ_ERR_SUCCESS) {
+      OLOG_ERROR("MQTT: Failed to publish memory message: %s", mosquitto_strerror(rc));
+   }
+
+   /* Free JSON object */
+   json_object_put(root);
+
+   return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
+}
+
+/**
+ * @brief Publish fan monitoring data to MQTT
+ *
+ * @param rpm Fan speed in RPM
+ * @param load_percent Fan load percentage (0-100)
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_fan_data(int rpm, int load_percent)
+{
+   if (!mqtt_initialized || !mosq) {
+      return -1;
+   }
+
+   /* Skip if fan data is not available */
+   if (rpm < 0 || load_percent < 0) {
+      return 0;  /* Not an error, just no data */
+   }
+
+   /* Create JSON object */
+   struct json_object *root = json_object_new_object();
+
+   /* Add device type and measurements */
+   json_object_object_add(root, "device", json_object_new_string("Fan"));
+   json_object_object_add(root, "rpm", json_object_new_int(rpm));
+   json_object_object_add(root, "load", json_object_new_int(load_percent));
+
+   /* Convert to JSON string */
+   const char *json_str = json_object_to_json_string(root);
+
+   /* Publish to MQTT */
+   int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
+   if (rc != MOSQ_ERR_SUCCESS) {
+      OLOG_ERROR("MQTT: Failed to publish fan message: %s", mosquitto_strerror(rc));
+   }
+
+   /* Free JSON object */
+   json_object_put(root);
+
+   return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
+}
+
 void mqtt_cleanup(void)
 {
+   mqtt_initialized = false;
    if (mosq) {
       mosquitto_loop_stop(mosq, true);
       mosquitto_disconnect(mosq);
@@ -171,6 +285,5 @@ void mqtt_cleanup(void)
       mosq = NULL;
    }
    mosquitto_lib_cleanup();
-   mqtt_initialized = false;
 }
 
