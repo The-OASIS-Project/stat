@@ -30,6 +30,7 @@ include_directories(
 # Source files
 set(SOURCES
    src/ark_detection.c
+   src/battery_model.c
    src/cpu_monitor.c
    src/fan_monitor.c
    src/i2c_utils.c
@@ -43,6 +44,7 @@ set(SOURCES
 # Header files (for IDE support)
 set(HEADERS
    include/ark_detection.h
+   include/battery_model.h
    include/cpu_monitor.h
    include/fan_monitor.h
    include/i2c_utils.h

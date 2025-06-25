@@ -55,14 +55,23 @@
 
 /* Predefined battery configurations */
 static const battery_config_t battery_configs[] = {
-    {13.2f, 16.8f, 20.0f, 10.0f, "4S_Li-ion"},     // Nominal 14.4 V (3.6 V/cell)
-    {16.5f, 21.0f, 20.0f, 10.0f, "5S_Li-ion"},     // Nominal 18.0 V (3.6 V/cell)
-    {19.8f, 25.2f, 20.0f, 10.0f, "6S_Li-ion"},     // Nominal 21.6 V (3.6 V/cell)
+    /* Standard Li-ion configurations */
+    {12.0f, 16.8f, 14.4f, 20.0f, 10.0f, 2600.0f, 4, 1, BATT_CHEMISTRY_LIION, "4S_Li-ion"},     // 4S 18650
+    {15.0f, 21.0f, 18.0f, 20.0f, 10.0f, 2600.0f, 5, 1, BATT_CHEMISTRY_LIION, "5S_Li-ion"},     // 5S 18650
+    {18.0f, 25.2f, 21.6f, 20.0f, 10.0f, 2600.0f, 6, 1, BATT_CHEMISTRY_LIION, "6S_Li-ion"},     // 6S 18650
 
-    {6.6f,  8.4f,  20.0f, 10.0f, "2S_LiPo"},       // Nominal 7.4  V (3.7 V/cell)
-    {9.9f, 12.6f,  20.0f, 10.0f, "3S_LiPo"},       // Nominal 11.1 V (3.7 V/cell)
-    {19.8, 25.2f,  20.0f, 10.0f, "6S_LiPo"},       // Nominal 22.2 V (3.7 V/cell)
-    {0.0f,  0.0f,  0.0f,  0.0f,  "custom"}         // Custom configuration
+    /* LiPo configurations */
+    {6.0f,  8.4f,  7.4f,  20.0f, 10.0f, 5000.0f, 2, 1, BATT_CHEMISTRY_LIPO, "2S_LiPo"},        // 2S LiPo
+    {9.0f, 12.6f, 11.1f,  20.0f, 10.0f, 5000.0f, 3, 1, BATT_CHEMISTRY_LIPO, "3S_LiPo"},        // 3S LiPo
+    {18.0f, 25.2f, 22.2f, 20.0f, 10.0f, 5000.0f, 6, 1, BATT_CHEMISTRY_LIPO, "6S_LiPo"},        // 6S LiPo
+
+    /* User-requested specific configurations */
+    {12.0f, 16.8f, 14.4f, 20.0f, 10.0f, 10000.0f, 4, 2, BATT_CHEMISTRY_LIION, "4S2P_Samsung50E"}, // 4S2P Samsung 50E
+    {9.0f, 12.6f, 11.1f,  20.0f, 10.0f, 5200.0f,  3, 1, BATT_CHEMISTRY_LIPO, "3S_5200mAh_LiPo"}, // 3S 5200mAh LiPo
+    {9.0f, 12.6f, 11.1f,  20.0f, 10.0f, 2200.0f,  3, 1, BATT_CHEMISTRY_LIPO, "3S_2200mAh_LiPo"}, // 3S 2200mAh LiPo
+
+    /* Placeholder for custom configuration */
+    {0.0f,  0.0f,  0.0f,  20.0f, 10.0f, 0.0f,     0, 0, BATT_CHEMISTRY_UNKNOWN, "custom"}
 };
 
 #define NUM_BATTERY_CONFIGS ((int)(sizeof(battery_configs) / sizeof(battery_configs[0])))
@@ -94,7 +103,6 @@ static void print_measurements(const ina238_measurements_t *measurements,
                               const ark_board_info_t *ark_info,
                               const battery_config_t *battery,
                               const system_metrics_t *sys_metrics);
-static float calculate_battery_percentage(float voltage, const battery_config_t *battery);
 static const char* get_battery_status(float percentage, const battery_config_t *battery);
 
 /**
@@ -153,6 +161,10 @@ static void print_usage(const char *prog_name)
     printf("      --battery-max V    Custom battery maximum voltage\n");
     printf("      --battery-warn %%   Battery warning threshold percent (default: 20)\n");
     printf("      --battery-crit %%   Battery critical threshold percent (default: 10)\n");
+    printf("      --battery-capacity MAH Battery capacity in mAh\n");
+    printf("      --battery-chemistry TYPE Battery chemistry (Li-ion, LiPo, LiFePO4, NiMH, Lead-Acid)\n");
+    printf("      --battery-cells NUM      Number of cells in series\n");
+    printf("      --battery-parallel NUM   Number of cells in parallel (default: 1)\n");
     printf("      --list-batteries   Show available battery configurations\n");
     printf("  -e, --service          Run in service mode (use with systemd)\n");
     printf("  -h, --help             Show this help message\n");
@@ -189,25 +201,6 @@ static void print_header(const ark_board_info_t *ark_info, const battery_config_
 }
 
 /**
- * @brief Calculate battery percentage based on voltage
- */
-static float calculate_battery_percentage(float voltage, const battery_config_t *battery)
-{
-    if (battery->max_voltage <= battery->min_voltage) {
-        return 0.0f;  // Invalid battery configuration
-    }
-    
-    float percentage = ((voltage - battery->min_voltage) / 
-                       (battery->max_voltage - battery->min_voltage)) * 100.0f;
-    
-    // Clamp to 0-100%
-    if (percentage < 0.0f) percentage = 0.0f;
-    if (percentage > 100.0f) percentage = 100.0f;
-    
-    return percentage;
-}
-
-/**
  * @brief Get battery status string based on percentage
  */
 static const char* get_battery_status(float percentage, const battery_config_t *battery)
@@ -219,6 +212,22 @@ static const char* get_battery_status(float percentage, const battery_config_t *
     } else {
         return "NORMAL";
     }
+}
+
+/**
+ * @brief Calculate the battery time remaining
+ */
+static float calculate_time_remaining(float voltage, float current, float temp, const battery_config_t *battery)
+{
+    battery_state_t state = {
+        .voltage = voltage,
+        .current = current,
+        .temperature = temp,
+        .percent_remaining = battery_calculate_percentage(voltage, battery),
+        .valid = true
+    };
+
+    return battery_estimate_time_remaining(&state, battery);
 }
 
 /**
@@ -249,10 +258,26 @@ static void print_measurements(const ina238_measurements_t *measurements,
         printf("│ Temperature:      %8.2f °C (INA238 die)                  │\n", measurements->temperature);
 
         /* Battery status */
-        float battery_percent = calculate_battery_percentage(measurements->bus_voltage, battery);
+        float battery_percent = battery_calculate_percentage(measurements->bus_voltage, battery);
         const char *battery_status = get_battery_status(battery_percent, battery);
 
+        /* Calculate estimated runtime */
+        float time_remaining = calculate_time_remaining(
+            measurements->bus_voltage,
+            measurements->current,
+            measurements->temperature,
+            battery);
+
+        /* Format time remaining as hours:minutes */
+        int hours = (int)(time_remaining / 60.0f);
+        int minutes = (int)(time_remaining - hours * 60.0f);
+
         printf("│ Battery Level:    %8.1f %%                                │\n", battery_percent);
+        printf("│ Time Remaining:   %4d:%02d h:m                               │\n", hours, minutes);
+        printf("│ Battery:          %-8s (%d cells, %.0f mAh)              │\n",
+               battery_chemistry_to_string(battery->chemistry),
+               battery->cells_series,
+               battery->capacity_mah);
         printf("│ Battery Status:   %-8s                                  │\n", battery_status);
     } else {
         printf("│ ERROR: Unable to read power telemetry data                │\n");
@@ -290,7 +315,7 @@ int main(int argc, char *argv[])
     bool service_mode = false;
     
     /* Battery configuration */
-    battery_config_t battery_config = battery_configs[1];  // Default to 5S_Li-ion
+    battery_config_t battery_config = battery_configs[8];  // Default to 5S_Li-ion
     bool custom_battery = false;
     
     /* Device and board information */
@@ -306,23 +331,27 @@ int main(int argc, char *argv[])
 
     /* Option parsing */
     static struct option long_options[] = {
-        {"bus",            required_argument, 0, 'b'},
-        {"address",        required_argument, 0, 'a'},
-        {"shunt",          required_argument, 0, 's'},
-        {"current",        required_argument, 0, 'c'},
-        {"interval",       required_argument, 0, 'i'},
-        {"battery",        required_argument, 0, 1000},
-        {"battery-min",    required_argument, 0, 1001},
-        {"battery-max",    required_argument, 0, 1002},
-        {"battery-warn",   required_argument, 0, 1003},
-        {"battery-crit",   required_argument, 0, 1004},
-        {"list-batteries", no_argument,       0, 1005},
-        {"mqtt-host",      required_argument, 0, 'H'},
-        {"mqtt-port",      required_argument, 0, 'P'},
-        {"mqtt-topic",     required_argument, 0, 'T'},
-        {"service",        no_argument,       0, 'e'},
-        {"help",           no_argument,       0, 'h'},
-        {"version",        no_argument,       0, 'v'},
+        {"bus",               required_argument, 0, 'b'},
+        {"address",           required_argument, 0, 'a'},
+        {"shunt",             required_argument, 0, 's'},
+        {"current",           required_argument, 0, 'c'},
+        {"interval",          required_argument, 0, 'i'},
+        {"battery",           required_argument, 0, 1000},
+        {"battery-min",       required_argument, 0, 1001},
+        {"battery-max",       required_argument, 0, 1002},
+        {"battery-warn",      required_argument, 0, 1003},
+        {"battery-crit",      required_argument, 0, 1004},
+        {"list-batteries",    no_argument,       0, 1005},
+        {"battery-capacity",  required_argument, 0, 1006},
+        {"battery-chemistry", required_argument, 0, 1007},
+        {"battery-cells",     required_argument, 0, 1008},
+        {"battery-parallel",  required_argument, 0, 1009},
+        {"mqtt-host",         required_argument, 0, 'H'},
+        {"mqtt-port",         required_argument, 0, 'P'},
+        {"mqtt-topic",        required_argument, 0, 'T'},
+        {"service",           no_argument,       0, 'e'},
+        {"help",              no_argument,       0, 'h'},
+        {"version",           no_argument,       0, 'v'},
         {0, 0, 0, 0}
     };
     
@@ -409,6 +438,26 @@ int main(int argc, char *argv[])
             case 1005: // --list-batteries
                 print_battery_configs();
                 return EXIT_SUCCESS;
+            case 1006: // --battery-capacity
+                battery_config.capacity_mah = atof(optarg);
+                custom_battery = true;
+                strcpy((char*)battery_config.name, "custom");
+                break;
+            case 1007: // --battery-chemistry
+                battery_config.chemistry = battery_chemistry_from_string(optarg);
+                custom_battery = true;
+                strcpy((char*)battery_config.name, "custom");
+                break;
+            case 1008: // --battery-cells
+                battery_config.cells_series = atoi(optarg);
+                custom_battery = true;
+                strcpy((char*)battery_config.name, "custom");
+                break;
+            case 1009: // --battery-parallel
+                battery_config.cells_parallel = atoi(optarg);
+                custom_battery = true;
+                strcpy((char*)battery_config.name, "custom");
+                break;
             case 'H':  // mqtt-host
                 strncpy(mqtt_host, optarg, sizeof(mqtt_host) - 1);
                 mqtt_host[sizeof(mqtt_host) - 1] = '\0';
@@ -505,8 +554,8 @@ int main(int argc, char *argv[])
 
         /* Calculate battery percentage here so it's available for both display and MQTT */
         if (measurements.valid) {
-            battery_percentage = calculate_battery_percentage(measurements.bus_voltage, &battery_config);
-            mqtt_publish_power_data(&measurements, battery_percentage);
+            battery_percentage = battery_calculate_percentage(measurements.bus_voltage, &battery_config);
+            mqtt_publish_power_data(&measurements, battery_percentage, &battery_config);
         }
 
         /* Read CPU usage */

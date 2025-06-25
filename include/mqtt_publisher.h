@@ -27,14 +27,7 @@
 
 #include <stdbool.h>
 #include "ina238.h"
-
-typedef struct {
-    float min_voltage;      // Empty battery voltage
-    float max_voltage;      // Full battery voltage
-    float warning_percent;  // Warning threshold percentage
-    float critical_percent; // Critical threshold percentage
-    const char *name;       // Battery type name
-} battery_config_t;
+#include "battery_model.h"
 
 /* MQTT Configuration */
 #define MQTT_DEFAULT_HOST    "localhost"
@@ -53,13 +46,15 @@ int mqtt_init(const char *host, int port, const char *topic);
 
 /**
  * @brief Publish power monitoring data to MQTT
- * 
+ *
  * @param measurements INA238 measurements
  * @param battery_percentage Calculated battery percentage
+ * @param battery Battery configuration for time estimation
  * @return int 0 on success, negative on error
  */
 int mqtt_publish_power_data(const ina238_measurements_t *measurements,
-                          float battery_percentage);
+                          float battery_percentage,
+                          const battery_config_t *battery);
 
 /**
  * @brief Publish CPU monitoring data to MQTT

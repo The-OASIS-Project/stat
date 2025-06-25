@@ -115,55 +115,80 @@ int mqtt_init(const char *host, int port, const char *topic)
 
 /* Make sure this function signature exactly matches the one in mqtt_publisher.h */
 int mqtt_publish_power_data(const ina238_measurements_t *measurements,
-                          float battery_percentage)
+                          float battery_percentage,
+                          const battery_config_t *battery)
 {
-   if (!mqtt_initialized || !mosq || !measurements->valid) {
-      return -1;
-   }
+    if (!mqtt_initialized || !mosq || !measurements->valid) {
+        return -1;
+    }
 
-   /* Determine battery status */
-   const char *battery_status;
-   if (battery_percentage <= 10.0f) {  /* Assume critical threshold is 10% */
-      battery_status = "CRITICAL";
-   } else if (battery_percentage <= 20.0f) {  /* Assume warning threshold is 20% */
-      battery_status = "WARNING";
-   } else {
-      battery_status = "NORMAL";
-   }
+    /* Determine battery status */
+    const char *battery_status;
+    if (battery_percentage <= 10.0f) {
+        battery_status = "CRITICAL";
+    } else if (battery_percentage <= 20.0f) {
+        battery_status = "WARNING";
+    } else {
+        battery_status = "NORMAL";
+    }
 
-   /* Create JSON object */
-   struct json_object *root = json_object_new_object();
+    /* Create JSON object */
+    struct json_object *root = json_object_new_object();
 
-   /* Add device type and measurements */
-   json_object_object_add(root, "device", json_object_new_string("Power"));
-   json_object_object_add(root, "voltage", json_object_new_double(measurements->bus_voltage));
-   json_object_object_add(root, "current", json_object_new_double(measurements->current));
-   json_object_object_add(root, "power", json_object_new_double(measurements->power));
-   json_object_object_add(root, "temperature", json_object_new_double(measurements->temperature));
-   
-   /* Add battery information */
-   json_object_object_add(root, "battery_level", json_object_new_double(battery_percentage));
-   json_object_object_add(root, "battery_status", json_object_new_string(battery_status));
-   
-   /* Since we can't directly access the battery_config fields, we'll have to get this info from main */
-   /* We'll just use placeholder values for chemistry, min_voltage, and max_voltage */
-   json_object_object_add(root, "chemistry", json_object_new_string("Li-ion"));
-   json_object_object_add(root, "min_voltage", json_object_new_double(16.5));
-   json_object_object_add(root, "max_voltage", json_object_new_double(21.0));
+    /* Add device type and measurements */
+    json_object_object_add(root, "device", json_object_new_string("Power"));
+    json_object_object_add(root, "voltage", json_object_new_double(measurements->bus_voltage));
+    json_object_object_add(root, "current", json_object_new_double(measurements->current));
+    json_object_object_add(root, "power", json_object_new_double(measurements->power));
+    json_object_object_add(root, "temperature", json_object_new_double(measurements->temperature));
 
-   /* Convert to JSON string */
-   const char *json_str = json_object_to_json_string(root);
+    /* Add battery information */
+    json_object_object_add(root, "battery_level", json_object_new_double(battery_percentage));
+    json_object_object_add(root, "battery_status", json_object_new_string(battery_status));
 
-   /* Publish to MQTT */
-   int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
-   if (rc != MOSQ_ERR_SUCCESS) {
-      OLOG_ERROR("MQTT: Failed to publish message: %s", mosquitto_strerror(rc));
-   }
+    /* Add battery time remaining if battery config is available */
+    if (battery) {
+        battery_state_t state = {
+            .voltage = measurements->bus_voltage,
+            .current = measurements->current,
+            .temperature = measurements->temperature,
+            .percent_remaining = battery_percentage,
+            .valid = true
+        };
 
-   /* Free JSON object */
-   json_object_put(root);
+        float time_remaining = battery_estimate_time_remaining(&state, battery);
 
-   return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
+        json_object_object_add(root, "time_remaining_min", json_object_new_double(time_remaining));
+
+        /* Format time as HH:MM for display */
+        int hours = (int)(time_remaining / 60.0f);
+        int minutes = (int)(time_remaining - hours * 60.0f);
+        char time_str[10];
+        snprintf(time_str, sizeof(time_str), "%d:%02d", hours, minutes);
+        json_object_object_add(root, "time_remaining_fmt", json_object_new_string(time_str));
+
+        /* Add battery configuration details */
+        json_object_object_add(root, "battery_chemistry",
+                              json_object_new_string(battery_chemistry_to_string(battery->chemistry)));
+        json_object_object_add(root, "battery_capacity_mah",
+                              json_object_new_double(battery->capacity_mah));
+        json_object_object_add(root, "battery_cells",
+                              json_object_new_int(battery->cells_series));
+    }
+
+    /* Convert to JSON string */
+    const char *json_str = json_object_to_json_string(root);
+
+    /* Publish to MQTT */
+    int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
+    if (rc != MOSQ_ERR_SUCCESS) {
+        OLOG_ERROR("MQTT: Failed to publish message: %s", mosquitto_strerror(rc));
+    }
+
+    /* Free JSON object */
+    json_object_put(root);
+
+    return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
 }
 
 /**
