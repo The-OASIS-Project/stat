@@ -1,14 +1,15 @@
 # STAT - System Telemetry and Analytics Tracker
 
-**S.T.A.T. – System Telemetry and Analytics Tracker**
-
 STAT is the OASIS subsystem responsible for monitoring internal hardware conditions and broadcasting live telemetry across the network. It tracks critical metrics such as power levels, CPU usage, memory load, and thermal status, then publishes this data via MQTT for consumption by other modules like DAWN (voice interface) and MIRAGE (HUD). 
 
-Designed for extensibility, STAT serves as the diagnostic heartbeat of the suit—reportingand keeping the entire system informed and in sync.
+Designed for extensibility, STAT serves as the diagnostic heartbeat of the suit—reporting and keeping the entire system informed and in sync.
 
 ## Features
 
 - **Real-time Hardware Monitoring**: Continuous monitoring of voltage, current, power, and temperature
+- **Battery Time Estimation**: Advanced runtime prediction based on battery chemistry, capacity, and load
+- **Accurate Battery Status**: Non-linear state of charge calculation using chemistry-specific discharge curves
+- **Temperature Compensation**: Adjusts battery capacity estimates based on temperature conditions
 - **ARK Electronics Jetson Carrier Support**: Automatic detection with optimized settings
 - **OASIS Integration Ready**: Designed for integration with DAWN, MIRAGE, and other modules
 - **Professional Telemetry Display**: Clean, organized output with status indicators
@@ -37,8 +38,12 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 # Build
 make -j$(nproc)
 
-# Optional: Install
+# Installation (basic)
 sudo make install
+
+# For complete installation with service setup
+cd ..
+sudo ./install.sh
 ```
 
 ## Usage
@@ -62,8 +67,35 @@ sudo make install
 | `-s` | `--shunt` | Shunt resistor value (Ω) | `0.0003` (or `0.001` for ARK) |
 | `-c` | `--current` | Maximum current (A) | `327.68` (or `10.0` for ARK) |
 | `-i` | `--interval` | Sampling interval (ms) | `1000` |
+| | `--battery` | Battery type | `5S_Li-ion` |
+| | `--battery-min` | Custom battery minimum voltage | Type-specific |
+| | `--battery-max` | Custom battery maximum voltage | Type-specific |
+| | `--battery-warn` | Battery warning threshold percent | `20` |
+| | `--battery-crit` | Battery critical threshold percent | `10` |
+| | `--battery-capacity` | Battery capacity in mAh | Type-specific |
+| | `--battery-chemistry` | Battery chemistry (Li-ion, LiPo, LiFePO4, NiMH, Lead-Acid) | Type-specific |
+| | `--battery-cells` | Number of cells in series | Type-specific |
+| | `--battery-parallel` | Number of cells in parallel | `1` |
+| | `--list-batteries` | Show available battery configurations | - |
+| `-e` | `--service` | Run in service mode | - |
 | `-h` | `--help` | Show help message | - |
 | `-v` | `--version` | Show version information | - |
+
+### Predefined Battery Configurations
+
+STAT includes several predefined battery configurations:
+
+| Name | Description | Cells | Capacity | Chemistry |
+|------|-------------|-------|----------|-----------|
+| `4S_Li-ion` | Standard 4S Li-ion battery | 4S1P | 2600 mAh | Li-ion |
+| `5S_Li-ion` | Standard 5S Li-ion battery | 5S1P | 2600 mAh | Li-ion |
+| `6S_Li-ion` | Standard 6S Li-ion battery | 6S1P | 2600 mAh | Li-ion |
+| `2S_LiPo` | Standard 2S LiPo battery | 2S1P | 5000 mAh | LiPo |
+| `3S_LiPo` | Standard 3S LiPo battery | 3S1P | 5000 mAh | LiPo |
+| `6S_LiPo` | Standard 6S LiPo battery | 6S1P | 5000 mAh | LiPo |
+| `4S2P_Samsung50E` | Samsung 50E 21700 battery | 4S2P | 10000 mAh | Li-ion |
+| `3S_5200mAh_LiPo` | 3S 5200mAh LiPo battery | 3S1P | 5200 mAh | LiPo |
+| `3S_2200mAh_LiPo` | 3S 2200mAh LiPo battery | 3S1P | 2200 mAh | LiPo |
 
 ### Example Commands
 
@@ -73,6 +105,12 @@ sudo make install
 
 # Run with custom sampling rate
 ./oasis-stat --interval 500
+
+# Run with specific battery configuration
+./oasis-stat --battery 4S2P_Samsung50E
+
+# Use custom battery settings
+./oasis-stat --battery custom --battery-min 12.0 --battery-max 16.8 --battery-capacity 10000 --battery-chemistry Li-ion --battery-cells 4 --battery-parallel 2
 
 # Override auto-detected settings
 ./oasis-stat --shunt 0.0005 --current 15.0
@@ -99,24 +137,46 @@ Example output:
   OASIS Hardware Monitoring and Telemetry Collection
 ═══════════════════════════════════════════════════════════════
 Platform: ARK Jetson Carrier (S/N: 00000000000000000000000000000000)
-Battery: 5S_Li-ion (18.0V - 21.0V)
+Battery: 4S2P_Samsung50E (14.4V - 16.8V)
 Status: ONLINE - Telemetry collection active
 Press Ctrl+C to shutdown STAT
 
 ┌─────────────────────────────────────────────────────────────┐
 │                    POWER TELEMETRY DATA                     │
 ├─────────────────────────────────────────────────────────────┤
-│ Bus Voltage:      19.981 V                                  │
-│ Current:           0.512 A                                  │
-│ Power:            10.225 W                                  │
+│ Bus Voltage:      15.842 V                                  │
+│ Current:           1.512 A                                  │
+│ Power:            23.953 W                                  │
 │ Temperature:       46.38 °C (INA238 die)                    │
 │                                                             │
-│ Battery Level:      66.0 %                                  │
-│ Battery Status: NORMAL                                      │
+│ Battery Level:      76.0 %                                  │
+│ Time Remaining:      5:03 h:m                               │
+│ Battery:          Li-ion (4 cells, 10000 mAh)               │
+│ Battery Status:   NORMAL                                    │
 └─────────────────────────────────────────────────────────────┘
 
 [STAT] Telemetry broadcast ready for OASIS network consumption
 ```
+
+## Battery Time Estimation
+
+STAT uses an advanced battery time estimation algorithm that takes into account:
+
+1. **Battery Chemistry**: Different discharge curves for Li-ion, LiPo, LiFePO4, etc.
+2. **Temperature Effects**: Reduced capacity at lower temperatures
+3. **Current Load**: Actual measured current draw for accurate predictions
+4. **Cell Configuration**: Number of cells in series and parallel
+
+The estimation process:
+1. Calculates current state of charge using chemistry-specific discharge curves
+2. Applies temperature compensation to the battery capacity
+3. Determines remaining capacity based on the state of charge
+4. Calculates runtime by dividing remaining capacity by current draw
+
+For optimal accuracy:
+- Use the correct battery chemistry and capacity
+- Ensure the temperature sensor is positioned to reflect the battery temperature
+- Allow the system to run for a few minutes to stabilize readings
 
 ## Architecture
 
@@ -208,50 +268,19 @@ i2cget -y 7 0x45 0x3e w  # Read manufacturer ID from INA238
 - **INA238 Communication**: Check wiring, power supply, and I2C address
 - **Telemetry Errors**: Validate shunt resistor value and current range settings
 - **Display Issues**: Ensure terminal supports ANSI escape sequences
-
-## Performance Characteristics
-
-### Sampling Rates
-- **Default**: 1 Hz (1000ms interval)
-- **Range**: 0.1 Hz to 10 Hz (100ms to 10000ms)
-- **Accuracy**: ±0.1% (limited by hardware)
-
-### Resource Usage
-- **CPU**: <1% on ARM Cortex-A57
-- **Memory**: <5MB resident
-- **I2C Bandwidth**: <1% of bus capacity
-- **Network**: Ready for MQTT publishing (future)
+- **Battery Time Estimate Errors**: Verify battery configuration matches physical battery
 
 ## Security Considerations
 
 ### Access Control
 - **I2C Permissions**: Requires i2c group membership
 - **File System**: Read-only access to device files
-- **Network**: Future MQTT implementation will support TLS
+- **Network**: MQTT server running with appropriate permissions
 
 ### Data Privacy
 - **Local Processing**: All telemetry processing local to device
 - **No External Dependencies**: Self-contained operation
 - **Configurable Publishing**: User control over data transmission
-
-## Roadmap
-
-### Version 1.1 (Planned)
-- MQTT telemetry publishing
-- JSON output format
-- Configuration file support
-- Systemd service integration
-
-### Version 1.2 (Planned)
-- Multi-sensor support (INA219, INA226)
-- Historical data logging
-- Web interface for remote monitoring
-- Alert threshold configuration
-
-### Version 2.0 (Future)
-- Full OASIS module integration
-- Voice alert integration (DAWN)
-- HUD telemetry display (MIRAGE)
 
 ## License
 
@@ -262,26 +291,6 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 You should have received a copy of the GNU General Public License along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 By contributing to this project, you agree to license your contributions under the GPLv3 (or any later version) or any future licenses chosen by the project author(s). Contributions include any modifications, enhancements, or additions to the project. These contributions become part of the project and are adopted by the project author(s).
-
-## Contributing
-
-Contributions to STAT and the broader OASIS project are welcome! Please follow the established code style and include appropriate tests for new functionality.
-
-### Development Standards
-
-- **Code Style**: 3-space indentation, descriptive variable names
-- **Documentation**: Doxygen comments for all public functions
-- **Error Handling**: Comprehensive error checking and meaningful messages
-- **Integration**: Consider impact on other OASIS modules
-
-### Submitting Changes
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes following the coding standards
-4. Add tests for new functionality
-5. Update documentation as needed
-6. Submit a pull request with detailed description
 
 ## Support
 
@@ -299,4 +308,3 @@ The modular structure makes it easy to:
 - Add data logging and historical analysis
 - Integrate with voice, HUD, and orchestration modules
 - Reuse components across the OASIS project
-
