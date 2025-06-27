@@ -32,6 +32,11 @@ extern "C" {
 #endif
 
 /**
+ * @brief Maximum length for battery configuration names
+ */
+#define BATTERY_NAME_MAX_LENGTH 32
+
+/**
  * @brief Battery chemistry types
  */
 typedef enum {
@@ -56,7 +61,7 @@ typedef struct {
     int cells_series;          /**< Number of cells in series */
     int cells_parallel;        /**< Number of cells in parallel (default 1) */
     battery_chemistry_t chemistry; /**< Battery chemistry type */
-    const char *name;          /**< Battery type name */
+    char name[BATTERY_NAME_MAX_LENGTH]; /**< Battery type name */
 } battery_config_t;
 
 /**
@@ -71,6 +76,14 @@ typedef struct {
     const char *status;        /**< Battery status (NORMAL, WARNING, CRITICAL) */
     bool valid;                /**< Whether the battery state is valid */
 } battery_state_t;
+
+/**
+ * @brief Initialize battery configuration with default values
+ *
+ * @param config Pointer to battery configuration structure to initialize
+ * @return int 0 on success, negative on error
+ */
+int init_battery_config(battery_config_t *config);
 
 /**
  * @brief Calculate battery percentage based on battery chemistry and voltage

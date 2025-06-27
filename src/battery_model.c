@@ -91,6 +91,36 @@ static const discharge_point_t lifepo4_discharge_curve[] = {
     {1.00, 3.38}  /* 100% - fully charged */
 };
 
+/**
+ * @brief Initialize battery configuration with default values
+ *
+ * @param config Pointer to battery configuration structure to initialize
+ * @return int 0 on success, negative on error
+ */
+int init_battery_config(battery_config_t *config)
+{
+    if (!config) {
+        return -1;  // Invalid parameter
+    }
+
+    // Initialize with sensible defaults
+    config->min_voltage = 0.0f;
+    config->max_voltage = 0.0f;
+    config->nominal_voltage = 0.0f;
+    config->warning_percent = 20.0f;
+    config->critical_percent = 10.0f;
+    config->capacity_mah = 0.0f;
+    config->cells_series = 0;
+    config->cells_parallel = 1;
+    config->chemistry = BATT_CHEMISTRY_UNKNOWN;
+
+    // Use strncpy to avoid buffer overflow
+    strncpy(config->name, "uninitialized", BATTERY_NAME_MAX_LENGTH - 1);
+    config->name[BATTERY_NAME_MAX_LENGTH - 1] = '\0'; // Ensure null termination
+
+    return 0;
+}
+
 typedef struct { float t; float f; } tf_pair_t;
 
 /* -------------------------------------------------------------------------- */

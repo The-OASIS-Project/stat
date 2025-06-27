@@ -69,9 +69,7 @@ static const battery_config_t battery_configs[] = {
     {12.0f, 16.8f, 14.4f, 20.0f, 10.0f, 10000.0f, 4, 2, BATT_CHEMISTRY_LIION, "4S2P_Samsung50E"}, // 4S2P Samsung 50E
     {9.0f, 12.6f, 11.1f,  20.0f, 10.0f, 5200.0f,  3, 1, BATT_CHEMISTRY_LIPO, "3S_5200mAh_LiPo"}, // 3S 5200mAh LiPo
     {9.0f, 12.6f, 11.1f,  20.0f, 10.0f, 2200.0f,  3, 1, BATT_CHEMISTRY_LIPO, "3S_2200mAh_LiPo"}, // 3S 2200mAh LiPo
-
-    /* Placeholder for custom configuration */
-    {0.0f,  0.0f,  0.0f,  20.0f, 10.0f, 0.0f,     0, 0, BATT_CHEMISTRY_UNKNOWN, "custom"}
+    {9.0f, 12.6f, 11.1f,  20.0f, 10.0f, 1500.0f,  3, 1, BATT_CHEMISTRY_LIPO, "3S_1500mAh_LiPo"}, // 3S 1500mAh LiPo
 };
 
 #define NUM_BATTERY_CONFIGS ((int)(sizeof(battery_configs) / sizeof(battery_configs[0])))
@@ -315,7 +313,7 @@ int main(int argc, char *argv[])
     bool service_mode = false;
     
     /* Battery configuration */
-    battery_config_t battery_config = battery_configs[8];  // Default to 5S_Li-ion
+    battery_config_t battery_config;
     bool custom_battery = false;
     
     /* Device and board information */
@@ -367,6 +365,9 @@ int main(int argc, char *argv[])
         OLOG_INFO("  I2C Bus: %s", i2c_bus);
         OLOG_INFO("  Shunt: %.3f Ω", r_shunt);
     }
+
+    // Set default battery config
+    memcpy(&battery_config, &battery_configs[7], sizeof(battery_config_t));
     
     /* Parse command line arguments (can override auto-detected defaults) */
     int opt;
@@ -420,14 +421,14 @@ int main(int argc, char *argv[])
                 }
                 break;
             case 1001: // --battery-min
+                strcpy((char*)battery_config.name, "custom");
                 battery_config.min_voltage = atof(optarg);
                 custom_battery = true;
-                strcpy((char*)battery_config.name, "custom");
                 break;
             case 1002: // --battery-max
+                strcpy((char*)battery_config.name, "custom");
                 battery_config.max_voltage = atof(optarg);
                 custom_battery = true;
-                strcpy((char*)battery_config.name, "custom");
                 break;
             case 1003: // --battery-warn
                 battery_config.warning_percent = atof(optarg);
@@ -439,24 +440,24 @@ int main(int argc, char *argv[])
                 print_battery_configs();
                 return EXIT_SUCCESS;
             case 1006: // --battery-capacity
+                strcpy((char*)battery_config.name, "custom");
                 battery_config.capacity_mah = atof(optarg);
                 custom_battery = true;
-                strcpy((char*)battery_config.name, "custom");
                 break;
             case 1007: // --battery-chemistry
+                strcpy((char*)battery_config.name, "custom");
                 battery_config.chemistry = battery_chemistry_from_string(optarg);
                 custom_battery = true;
-                strcpy((char*)battery_config.name, "custom");
                 break;
             case 1008: // --battery-cells
+                strcpy((char*)battery_config.name, "custom");
                 battery_config.cells_series = atoi(optarg);
                 custom_battery = true;
-                strcpy((char*)battery_config.name, "custom");
                 break;
             case 1009: // --battery-parallel
+                strcpy((char*)battery_config.name, "custom");
                 battery_config.cells_parallel = atoi(optarg);
                 custom_battery = true;
-                strcpy((char*)battery_config.name, "custom");
                 break;
             case 'H':  // mqtt-host
                 strncpy(mqtt_host, optarg, sizeof(mqtt_host) - 1);
