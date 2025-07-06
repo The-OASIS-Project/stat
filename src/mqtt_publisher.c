@@ -114,8 +114,7 @@ int mqtt_init(const char *host, int port, const char *topic)
    return 0;
 }
 
-/* Make sure this function signature exactly matches the one in mqtt_publisher.h */
-int mqtt_publish_power_data(const ina238_measurements_t *measurements,
+int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
                           float battery_percentage,
                           const battery_config_t *battery)
 {
@@ -137,7 +136,8 @@ int mqtt_publish_power_data(const ina238_measurements_t *measurements,
     struct json_object *root = json_object_new_object();
 
     /* Add device type and measurements */
-    json_object_object_add(root, "device", json_object_new_string("Power"));
+    json_object_object_add(root, "device", json_object_new_string("Battery"));
+    json_object_object_add(root, "chip", json_object_new_string("INA238"));
     json_object_object_add(root, "voltage", json_object_new_double(measurements->bus_voltage));
     json_object_object_add(root, "current", json_object_new_double(measurements->current));
     json_object_object_add(root, "power", json_object_new_double(measurements->power));
@@ -209,7 +209,8 @@ int mqtt_publish_ina3221_data(const ina3221_measurements_t *measurements)
    struct json_object *channels_array = json_object_new_array();
 
    /* Add device type */
-   json_object_object_add(root, "device", json_object_new_string("INA3221"));
+   json_object_object_add(root, "device", json_object_new_string("SystemPower"));
+   json_object_object_add(root, "chip", json_object_new_string("INA3221"));
    json_object_object_add(root, "num_channels", json_object_new_int(measurements->num_channels));
 
    /* Add each channel */

@@ -46,14 +46,14 @@
 int mqtt_init(const char *host, int port, const char *topic);
 
 /**
- * @brief Publish power monitoring data to MQTT
+ * @brief Publish battery monitoring data to MQTT
  *
  * @param measurements INA238 measurements
  * @param battery_percentage Calculated battery percentage
  * @param battery Battery configuration for time estimation
  * @return int 0 on success, negative on error
  */
-int mqtt_publish_power_data(const ina238_measurements_t *measurements,
+int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
                           float battery_percentage,
                           const battery_config_t *battery);
 

@@ -799,7 +799,7 @@ int main(int argc, char *argv[])
             /* Calculate battery percentage and publish MQTT for INA238 */
             if (measurements.valid) {
                 battery_percentage = battery_calculate_percentage(measurements.bus_voltage, &battery_config);
-                mqtt_publish_power_data(&measurements, battery_percentage, &battery_config);
+                mqtt_publish_battery_data(&measurements, battery_percentage, &battery_config);
             }
         }
 
