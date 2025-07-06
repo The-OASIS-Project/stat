@@ -35,6 +35,7 @@ set(SOURCES
    src/fan_monitor.c
    src/i2c_utils.c
    src/ina238.c
+   src/ina3221.c
    src/logging.c
    src/memory_monitor.c
    src/mqtt_publisher.c
@@ -50,6 +51,7 @@ set(HEADERS
    include/i2c_utils.h
    include/ina238.h
    include/ina238_registers.h
+   include/ina3221.h
    include/logging.h
    include/memory_monitor.h
    include/mqtt_publisher.h

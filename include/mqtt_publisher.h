@@ -27,6 +27,7 @@
 
 #include <stdbool.h>
 #include "ina238.h"
+#include "ina3221.h"
 #include "battery_model.h"
 
 /* MQTT Configuration */
@@ -55,6 +56,14 @@ int mqtt_init(const char *host, int port, const char *topic);
 int mqtt_publish_power_data(const ina238_measurements_t *measurements,
                           float battery_percentage,
                           const battery_config_t *battery);
+
+/**
+ * @brief Publish INA3221 multi-channel power data to MQTT
+ *
+ * @param measurements INA3221 measurements from all channels
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_ina3221_data(const ina3221_measurements_t *measurements);
 
 /**
  * @brief Publish CPU monitoring data to MQTT

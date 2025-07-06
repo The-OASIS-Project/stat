@@ -44,6 +44,7 @@
 #include "fan_monitor.h"
 #include "i2c_utils.h"
 #include "ina238.h"
+#include "ina3221.h"
 #include "logging.h"
 #include "memory_monitor.h"
 #include "mqtt_publisher.h"
@@ -79,6 +80,13 @@ static const battery_config_t battery_configs[] = {
 #define STAT_VERSION_MINOR 0
 #define STAT_VERSION_PATCH 0
 
+typedef enum {
+    POWER_MONITOR_NONE,
+    POWER_MONITOR_INA238,
+    POWER_MONITOR_INA3221,
+    POWER_MONITOR_BOTH
+} power_monitor_type_t;
+
 /* New structures to hold system metrics */
 typedef struct {
     float cpu_usage;
@@ -96,12 +104,19 @@ static void print_usage(const char *prog_name);
 static void print_version(void);
 static void print_battery_configs(void);
 static void signal_handler(int signal);
-static void print_header(const ark_board_info_t *ark_info, const battery_config_t *battery);
-static void print_measurements(const ina238_measurements_t *measurements,
+static void print_ina238_measurements(const ina238_measurements_t *measurements,
                               const ark_board_info_t *ark_info,
                               const battery_config_t *battery,
                               const system_metrics_t *sys_metrics);
 static const char* get_battery_status(float percentage, const battery_config_t *battery);
+static void print_ina3221_measurements(const ina3221_measurements_t *ina3221_measurements,
+                                      const ark_board_info_t *ark_info,
+                                      const system_metrics_t *sys_metrics);
+static void print_combined_measurements(const ina238_measurements_t *ina238_measurements,
+                                       const ina3221_measurements_t *ina3221_measurements,
+                                       const ark_board_info_t *ark_info,
+                                       const battery_config_t *battery,
+                                       const system_metrics_t *sys_metrics);
 
 /**
  * @brief Signal handler for graceful shutdown
@@ -154,6 +169,7 @@ static void print_usage(const char *prog_name)
     printf("  -s, --shunt SHUNT      Shunt resistor value in ohms (default: 0.0003, or 0.001 for ARK)\n");
     printf("  -c, --current MAX      Maximum current in amps (default: 327.68, or 10.0 for ARK)\n");
     printf("  -i, --interval MS      Sampling interval in milliseconds (default: 1000, range: 100-10000)\n");
+    printf("  -m, --monitor TYPE     Power monitor type: ina238, ina3221, both, auto (default: auto)\n");
     printf("      --battery TYPE     Battery type (default: 5S_Li-ion)\n");
     printf("      --battery-min V    Custom battery minimum voltage\n");
     printf("      --battery-max V    Custom battery maximum voltage\n");
@@ -171,31 +187,22 @@ static void print_usage(const char *prog_name)
     printf("  -H, --mqtt-host HOST   MQTT broker hostname (default: %s)\n", MQTT_DEFAULT_HOST);
     printf("  -P, --mqtt-port PORT   MQTT broker port (default: %d)\n", MQTT_DEFAULT_PORT);
     printf("  -T, --mqtt-topic TOPIC MQTT topic to publish to (default: %s)\n", MQTT_DEFAULT_TOPIC);
+    printf("\nPower Monitor Types:\n");
+    printf("  auto    - Automatically detect available power monitors (default)\n");
+    printf("  ina238  - Use INA238 single-channel power monitor (I2C direct)\n");
+    printf("  ina3221 - Use INA3221 3-channel power monitor (sysfs/hwmon)\n");
+    printf("  both    - Use both INA238 and INA3221 simultaneously\n");
+    printf("\nExamples:\n");
+    printf("  ./oasis-stat                           # Auto-detect power monitors\n");
+    printf("  ./oasis-stat --monitor ina3221         # Force INA3221 3-channel monitoring\n");
+    printf("  ./oasis-stat --monitor ina238          # Force INA238 single-channel monitoring\n");
+    printf("  ./oasis-stat --monitor both            # Use both monitors (if available)\n");
+    printf("  ./oasis-stat --battery 4S2P_Samsung50E # Use specific battery configuration\n");
     printf("\nNote: If ARK Electronics Jetson Carrier is detected, optimized defaults are used.\n");
     printf("      Command-line options will override auto-detected settings.\n");
     printf("\nSTAT integrates with other OASIS modules:\n");
     printf("  • DAWN  - Voice interface and user interaction\n");
     printf("  • MIRAGE - Heads-up display and visual feedback\n");
-}
-
-/**
- * @brief Print application header with board information
- */
-static void print_header(const ark_board_info_t *ark_info, const battery_config_t *battery)
-{
-    printf("═══════════════════════════════════════════════════════════════\n");
-    printf("  STAT - System Telemetry and Analytics Tracker v%d.%d.%d\n", 
-           STAT_VERSION_MAJOR, STAT_VERSION_MINOR, STAT_VERSION_PATCH);
-    printf("  OASIS Hardware Monitoring and Telemetry Collection\n");
-    printf("═══════════════════════════════════════════════════════════════\n");
-    if (ark_info->detected) {
-        printf("Platform: ARK Jetson Carrier (S/N: %s)\n", ark_info->serial_number);
-    } else {
-        printf("Platform: Generic Linux System\n");
-    }
-    printf("Battery: %s (%.1fV - %.1fV)\n", battery->name, battery->min_voltage, battery->max_voltage);
-    printf("Status: ONLINE - Telemetry collection active\n");
-    printf("Press Ctrl+C to shutdown STAT\n\n");
 }
 
 /**
@@ -213,90 +220,238 @@ static const char* get_battery_status(float percentage, const battery_config_t *
 }
 
 /**
- * @brief Calculate the battery time remaining
+ * @brief Print INA238 measurements to screen (updated to match new style)
  */
-static float calculate_time_remaining(float voltage, float current, float temp, const battery_config_t *battery)
-{
-    battery_state_t state = {
-        .voltage = voltage,
-        .current = current,
-        .temperature = temp,
-        .percent_remaining = battery_calculate_percentage(voltage, battery),
-        .valid = true
-    };
-
-    return battery_estimate_time_remaining(&state, battery);
-}
-
-/**
- * @brief Print current measurements to screen
- */
-static void print_measurements(const ina238_measurements_t *measurements,
+static void print_ina238_measurements(const ina238_measurements_t *measurements,
                               const ark_board_info_t *ark_info,
                               const battery_config_t *battery,
                               const system_metrics_t *sys_metrics)
 {
-    printf("\033[2J\033[H");  // Clear screen and move cursor to top
+   printf("\033[2J\033[H");  // Clear screen and move cursor to top
 
-    /* Print header */
-    print_header(ark_info, battery);
+   /* Print header */
+   printf("═══════════════════════════════════════════════════════════════\n");
+   printf("  STAT - System Telemetry and Analytics Tracker v%d.%d.%d\n",
+           STAT_VERSION_MAJOR, STAT_VERSION_MINOR, STAT_VERSION_PATCH);
+   printf("  OASIS Hardware Monitoring and Telemetry Collection\n");
+   printf("═══════════════════════════════════════════════════════════════\n");
+   if (ark_info->detected) {
+      printf("Platform: ARK Jetson Carrier (S/N: %s)\n", ark_info->serial_number);
+   } else {
+      printf("Platform: Generic Linux System\n");
+   }
+   printf("Power Monitor: INA238 (Single-Channel)\n");
+   printf("Battery: %s (%.1fV - %.1fV)\n", battery->name, battery->min_voltage, battery->max_voltage);
+   printf("Status: ONLINE - Telemetry collection active\n");
+   printf("Press Ctrl+C to shutdown STAT\n\n");
 
-    /* Print telemetry data */
-    printf("┌─────────────────────────────────────────────────────────────┐\n");
-    printf("│                  SYSTEM TELEMETRY DATA                      │\n");
-    printf("├─────────────────────────────────────────────────────────────┤\n");
+   /* Print telemetry data */
+   printf("SYSTEM TELEMETRY DATA\n");
+   printf("━━━━━━━━━━━━━━━━━━━━━\n\n");
 
-    /* Power section */
-    printf("│ POWER                                                       │\n");
+   /* Power section */
+   if (measurements->valid) {
+      printf("BATTERY POWER\n");
+      printf("  Bus Voltage:   %8.3f V\n", measurements->bus_voltage);
+      printf("  Current:       %8.3f A\n", measurements->current);
+      printf("  Power:         %8.3f W\n", measurements->power);
+      printf("  Temperature:   %8.2f °C (INA238 die)\n", measurements->temperature);
 
-    if (measurements->valid) {
-        printf("│ Bus Voltage:      %8.3f V                                │\n", measurements->bus_voltage);
-        printf("│ Current:          %8.3f A                                │\n", measurements->current);
-        printf("│ Power:            %8.3f W                                │\n", measurements->power);
-        printf("│ Temperature:      %8.2f °C (INA238 die)                  │\n", measurements->temperature);
+      /* Battery status */
+      float battery_percent = battery_calculate_percentage(measurements->bus_voltage, battery);
+      const char *battery_status = get_battery_status(battery_percent, battery);
 
-        /* Battery status */
-        float battery_percent = battery_calculate_percentage(measurements->bus_voltage, battery);
-        const char *battery_status = get_battery_status(battery_percent, battery);
+      /* Calculate estimated runtime */
+      battery_state_t state = {
+         .voltage = measurements->bus_voltage,
+         .current = measurements->current,
+         .temperature = measurements->temperature,
+         .percent_remaining = battery_percent,
+         .valid = true
+      };
+      float time_remaining = battery_estimate_time_remaining(&state, battery);
 
-        /* Calculate estimated runtime */
-        float time_remaining = calculate_time_remaining(
-            measurements->bus_voltage,
-            measurements->current,
-            measurements->temperature,
-            battery);
+      /* Format time remaining as hours:minutes */
+      int hours = (int)(time_remaining / 60.0f);
+      int minutes = (int)(time_remaining - hours * 60.0f);
 
-        /* Format time remaining as hours:minutes */
-        int hours = (int)(time_remaining / 60.0f);
-        int minutes = (int)(time_remaining - hours * 60.0f);
+      printf("  Battery Level: %8.1f%%\n", battery_percent);
+      printf("  Time Remaining: %4d:%02d h:m\n", hours, minutes);
+      printf("  Battery Status: %s\n", battery_status);
+      printf("\n");
+   } else {
+      printf("POWER: ERROR - Unable to read power telemetry data\n");
+      printf("Check I2C connection and device power\n\n");
+   }
 
-        printf("│ Battery Level:    %8.1f %%                                │\n", battery_percent);
-        printf("│ Time Remaining:   %4d:%02d h:m                               │\n", hours, minutes);
-        printf("│ Battery:          %-8s (%d cells, %.0f mAh)              │\n",
-               battery_chemistry_to_string(battery->chemistry),
-               battery->cells_series,
-               battery->capacity_mah);
-        printf("│ Battery Status:   %-8s                                  │\n", battery_status);
-    } else {
-        printf("│ ERROR: Unable to read power telemetry data                │\n");
-        printf("│ Check I2C connection and device power                     │\n");
-    }
+   /* System section */
+   printf("SYSTEM MONITORING\n");
+   printf("  CPU Usage:    %6.1f%%\n", sys_metrics->cpu_usage);
+   printf("  Memory Usage: %6.1f%%\n", sys_metrics->memory_usage);
+   if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
+      printf("  Fan Speed:    %6d RPM (%d%%)\n", sys_metrics->fan_rpm, sys_metrics->fan_load);
+   } else {
+      printf("  Fan Speed:    Not available\n");
+   }
+   printf("\n");
 
-    printf("│                                                             │\n");
+   printf("[STAT] Telemetry broadcast ready for OASIS network consumption\n");
+}
 
-    /* System section */
-    printf("│ SYSTEM                                                      │\n");
-    printf("│ CPU Usage:        %8.1f %%                                │\n", sys_metrics->cpu_usage);
-    printf("│ Memory Usage:     %8.1f %%                                │\n", sys_metrics->memory_usage);
-    if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
-        printf("│ Fan Speed:        %8d RPM (%d%%)                        │\n",
-               sys_metrics->fan_rpm, sys_metrics->fan_load);
-    } else {
-        printf("│ Fan Speed:        Not available                           │\n");
-    }
+/**
+ * @brief Print INA3221 multi-channel measurements to screen (no box)
+ */
+static void print_ina3221_measurements(const ina3221_measurements_t *ina3221_measurements,
+                                      const ark_board_info_t *ark_info,
+                                      const system_metrics_t *sys_metrics)
+{
+   printf("\033[2J\033[H");  // Clear screen and move cursor to top
 
-    printf("└─────────────────────────────────────────────────────────────┘\n");
-    printf("\n[STAT] Telemetry broadcast ready for OASIS network consumption\n");
+   /* Print header */
+   printf("═══════════════════════════════════════════════════════════════\n");
+   printf("  STAT - System Telemetry and Analytics Tracker v%d.%d.%d\n",
+           STAT_VERSION_MAJOR, STAT_VERSION_MINOR, STAT_VERSION_PATCH);
+   printf("  OASIS Hardware Monitoring and Telemetry Collection\n");
+   printf("═══════════════════════════════════════════════════════════════\n");
+   if (ark_info->detected) {
+      printf("Platform: ARK Jetson Carrier (S/N: %s)\n", ark_info->serial_number);
+   } else {
+      printf("Platform: Generic Linux System\n");
+   }
+   printf("Power Monitor: INA3221 (3-Channel)\n");
+   printf("Status: ONLINE - Telemetry collection active\n");
+   printf("Press Ctrl+C to shutdown STAT\n\n");
+
+   /* Print telemetry data */
+   printf("SYSTEM TELEMETRY DATA\n");
+   printf("━━━━━━━━━━━━━━━━━━━━━\n\n");
+
+   /* Multi-channel power section */
+   if (ina3221_measurements->valid) {
+      printf("POWER MONITORING\n");
+
+      for (int i = 0; i < ina3221_measurements->num_channels; i++) {
+         const ina3221_channel_t *ch = &ina3221_measurements->channels[i];
+         if (!ch->valid) continue;
+
+         printf("  %s\n", ch->label);
+         printf("    Voltage: %8.3f V\n", ch->voltage);
+         printf("    Current: %8.3f A\n", ch->current);
+         printf("    Power:   %8.3f W\n", ch->power);
+         printf("\n");
+      }
+   } else {
+      printf("POWER: ERROR - Unable to read power telemetry data\n");
+      printf("Check sysfs interface and device power\n\n");
+   }
+
+   /* System section */
+   printf("SYSTEM MONITORING\n");
+   printf("  CPU Usage:    %6.1f%%\n", sys_metrics->cpu_usage);
+   printf("  Memory Usage: %6.1f%%\n", sys_metrics->memory_usage);
+   if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
+      printf("  Fan Speed:    %6d RPM (%d%%)\n", sys_metrics->fan_rpm, sys_metrics->fan_load);
+   } else {
+      printf("  Fan Speed:    Not available\n");
+   }
+   printf("\n");
+
+   printf("[STAT] Telemetry broadcast ready for OASIS network consumption\n");
+}
+
+/**
+ * @brief Print combined INA238 + INA3221 measurements to screen (no box)
+ */
+static void print_combined_measurements(const ina238_measurements_t *ina238_measurements,
+                                       const ina3221_measurements_t *ina3221_measurements,
+                                       const ark_board_info_t *ark_info,
+                                       const battery_config_t *battery,
+                                       const system_metrics_t *sys_metrics)
+{
+   printf("\033[2J\033[H");  // Clear screen and move cursor to top
+
+   /* Print header */
+   printf("═══════════════════════════════════════════════════════════════\n");
+   printf("  STAT - System Telemetry and Analytics Tracker v%d.%d.%d\n",
+           STAT_VERSION_MAJOR, STAT_VERSION_MINOR, STAT_VERSION_PATCH);
+   printf("  OASIS Hardware Monitoring and Telemetry Collection\n");
+   printf("═══════════════════════════════════════════════════════════════\n");
+   if (ark_info->detected) {
+      printf("Platform: ARK Jetson Carrier (S/N: %s)\n", ark_info->serial_number);
+   } else {
+      printf("Platform: Generic Linux System\n");
+   }
+   printf("Power Monitors: INA238 + INA3221\n");
+   printf("Battery: %s (%.1fV - %.1fV)\n", battery->name, battery->min_voltage, battery->max_voltage);
+   printf("Status: ONLINE - Telemetry collection active\n");
+   printf("Press Ctrl+C to shutdown STAT\n\n");
+
+   /* Print telemetry data */
+   printf("SYSTEM TELEMETRY DATA\n");
+   printf("━━━━━━━━━━━━━━━━━━━━━\n\n");
+
+   /* INA238 Battery Power section */
+   if (ina238_measurements->valid) {
+      printf("BATTERY POWER (INA238)\n");
+      printf("  Bus Voltage:   %8.3f V\n", ina238_measurements->bus_voltage);
+      printf("  Current:       %8.3f A\n", ina238_measurements->current);
+      printf("  Power:         %8.3f W\n", ina238_measurements->power);
+      printf("  Temperature:   %8.2f °C (INA238 die)\n", ina238_measurements->temperature);
+
+      /* Battery status */
+      float battery_percent = battery_calculate_percentage(ina238_measurements->bus_voltage, battery);
+      const char *battery_status = get_battery_status(battery_percent, battery);
+
+      /* Calculate estimated runtime */
+      battery_state_t state = {
+         .voltage = ina238_measurements->bus_voltage,
+         .current = ina238_measurements->current,
+         .temperature = ina238_measurements->temperature,
+         .percent_remaining = battery_percent,
+         .valid = true
+      };
+      float time_remaining = battery_estimate_time_remaining(&state, battery);
+
+      /* Format time remaining as hours:minutes */
+      int hours = (int)(time_remaining / 60.0f);
+      int minutes = (int)(time_remaining - hours * 60.0f);
+
+      printf("  Battery Level: %8.1f%%\n", battery_percent);
+      printf("  Time Remaining: %4d:%02d h:m\n", hours, minutes);
+      printf("  Battery Status: %s\n", battery_status);
+      printf("\n");
+   } else {
+      printf("BATTERY POWER (INA238): ERROR\n\n");
+   }
+
+   /* INA3221 System power section */
+   if (ina3221_measurements->valid) {
+      printf("SYSTEM POWER (INA3221)\n");
+
+      for (int i = 0; i < ina3221_measurements->num_channels; i++) {
+         const ina3221_channel_t *ch = &ina3221_measurements->channels[i];
+         if (!ch->valid) continue;
+
+         printf("  %s: %.3fV %.3fA %.3fW\n",
+                ch->label, ch->voltage, ch->current, ch->power);
+      }
+      printf("\n");
+   } else {
+      printf("SYSTEM POWER (INA3221): ERROR\n\n");
+   }
+
+   /* System section */
+   printf("SYSTEM MONITORING\n");
+   printf("  CPU Usage:    %6.1f%%\n", sys_metrics->cpu_usage);
+   printf("  Memory Usage: %6.1f%%\n", sys_metrics->memory_usage);
+   if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
+      printf("  Fan Speed:    %6d RPM (%d%%)\n", sys_metrics->fan_rpm, sys_metrics->fan_load);
+   } else {
+      printf("  Fan Speed:    Not available\n");
+   }
+   printf("\n");
+
+   printf("[STAT] Telemetry broadcast ready for OASIS network consumption\n");
 }
 
 /**
@@ -311,15 +466,18 @@ int main(int argc, char *argv[])
     float max_current = DEFAULT_MAX_CURRENT;
     int interval_ms = DEFAULT_SAMPLING_INTERVAL_MS;
     bool service_mode = false;
+    power_monitor_type_t power_monitor = POWER_MONITOR_NONE;
     
     /* Battery configuration */
     battery_config_t battery_config;
     bool custom_battery = false;
     
     /* Device and board information */
-    ina238_device_t ina238_dev= {0};
+    ina238_device_t ina238_dev = {0};
+    ina3221_device_t ina3221_dev = {0};
     ark_board_info_t ark_info = {0};
     ina238_measurements_t measurements = {0};
+    ina3221_measurements_t ina3221_measurements = {0};
     system_metrics_t system_metrics = {0};
 
     /* MQTT configuration */
@@ -334,6 +492,7 @@ int main(int argc, char *argv[])
         {"shunt",             required_argument, 0, 's'},
         {"current",           required_argument, 0, 'c'},
         {"interval",          required_argument, 0, 'i'},
+        {"monitor",           required_argument, 0, 'm'},
         {"battery",           required_argument, 0, 1000},
         {"battery-min",       required_argument, 0, 1001},
         {"battery-max",       required_argument, 0, 1002},
@@ -459,6 +618,20 @@ int main(int argc, char *argv[])
                 battery_config.cells_parallel = atoi(optarg);
                 custom_battery = true;
                 break;
+            case 'm': // --monitor
+                if (strcmp(optarg, "ina238") == 0) {
+                    power_monitor = POWER_MONITOR_INA238;
+                } else if (strcmp(optarg, "ina3221") == 0) {
+                    power_monitor = POWER_MONITOR_INA3221;
+                } else if (strcmp(optarg, "both") == 0) {
+                    power_monitor = POWER_MONITOR_BOTH;
+                } else if (strcmp(optarg, "auto") == 0) {
+                    power_monitor = POWER_MONITOR_NONE; // Auto-detect
+                } else {
+                    OLOG_ERROR("Error: Unknown monitor type '%s'. Use: ina238, ina3221, both, or auto", optarg);
+                    return EXIT_FAILURE;
+                }
+                break;
             case 'H':  // mqtt-host
                 strncpy(mqtt_host, optarg, sizeof(mqtt_host) - 1);
                 mqtt_host[sizeof(mqtt_host) - 1] = '\0';
@@ -489,6 +662,56 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* Auto-detect power monitors if not specified - Check INA3221 first */
+    if (power_monitor == POWER_MONITOR_NONE) {
+        bool ina238_available = false;
+        bool ina3221_available = false;
+
+        OLOG_INFO("Auto-detecting available power monitors...");
+
+        /* Check INA3221 first by looking for sysfs path */
+        if (access("/sys/bus/i2c/drivers/ina3221", F_OK) == 0) {
+            /* INA3221 driver exists, try to initialize */
+            ina3221_device_t test_ina3221;
+            if (ina3221_init(&test_ina3221) == 0) {
+                ina3221_available = true;
+                ina3221_close(&test_ina3221);
+                OLOG_INFO("INA3221 detected via sysfs interface");
+            } else {
+                OLOG_INFO("INA3221 driver found but device not accessible");
+            }
+        } else {
+            OLOG_INFO("INA3221 driver not found in sysfs");
+        }
+
+        /* Test INA238 availability (I2C direct access) */
+        ina238_device_t test_ina238;
+        if (ina238_init(&test_ina238, i2c_bus, i2c_addr, r_shunt, max_current) == 0) {
+            ina238_available = true;
+            ina238_close(&test_ina238);
+            OLOG_INFO("INA238 detected on I2C bus");
+        } else {
+            OLOG_INFO("INA238 not found or not accessible");
+        }
+
+        /* Determine which monitors to use - prefer INA3221 for modern systems */
+        if (ina3221_available && ina238_available) {
+            power_monitor = POWER_MONITOR_BOTH;
+            OLOG_INFO("Auto-selected: Both INA238 and INA3221 available");
+        } else if (ina3221_available) {
+            power_monitor = POWER_MONITOR_INA3221;
+            OLOG_INFO("Auto-selected: INA3221 (3-channel power monitoring)");
+        } else if (ina238_available) {
+            power_monitor = POWER_MONITOR_INA238;
+            OLOG_INFO("Auto-selected: INA238 (single-channel power monitoring)");
+        } else {
+            OLOG_ERROR("Error: No supported power monitors found");
+            OLOG_ERROR("  - INA3221: Check if driver is loaded: ls /sys/bus/i2c/drivers/ina3221/");
+            OLOG_ERROR("  - INA238: Check I2C bus %s and address 0x%02X", i2c_bus, i2c_addr);
+            return EXIT_FAILURE;
+        }
+    }
+
     /* Initialize logging based on mode */
     if (service_mode) {
         // Initialize syslog for service mode
@@ -516,10 +739,27 @@ int main(int argc, char *argv[])
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    /* Initialize the INA238 device */
-    if (ina238_init(&ina238_dev, i2c_bus, i2c_addr, r_shunt, max_current) < 0) {
-        OLOG_ERROR("Error: Failed to initialize INA238 device");
-        return EXIT_FAILURE;
+    /* Initialize the selected power monitor(s) */
+    if (power_monitor == POWER_MONITOR_INA238 || power_monitor == POWER_MONITOR_BOTH) {
+        if (ina238_init(&ina238_dev, i2c_bus, i2c_addr, r_shunt, max_current) < 0) {
+            OLOG_ERROR("Error: Failed to initialize INA238 device");
+            if (power_monitor == POWER_MONITOR_INA238) {
+                return EXIT_FAILURE;
+            }
+        } else {
+            OLOG_INFO("INA238 initialized successfully");
+        }
+    }
+
+    if (power_monitor == POWER_MONITOR_INA3221 || power_monitor == POWER_MONITOR_BOTH) {
+        if (ina3221_init(&ina3221_dev) < 0) {
+            OLOG_ERROR("Error: Failed to initialize INA3221 device");
+            if (power_monitor == POWER_MONITOR_INA3221) {
+                return EXIT_FAILURE;
+            }
+        } else {
+            OLOG_INFO("INA3221 initialized successfully");
+        }
     }
 
     if (cpu_monitor_init() == 0) {
@@ -542,21 +782,37 @@ int main(int argc, char *argv[])
     }
     
     /* Print device status */
-    ina238_print_status(&ina238_dev);
+    if (ina238_dev.initialized) {
+        ina238_print_status(&ina238_dev);
+    }
     
     /* Main monitoring loop */
     while (g_running) {
         float battery_percentage = 0.0F;
 
-        /* Read measurements from INA238 */
-        if (ina238_read_measurements(&ina238_dev, &measurements) != 0) {
-            measurements.valid = false;
+        /* Read measurements from INA238 if enabled */
+        if (power_monitor == POWER_MONITOR_INA238 || power_monitor == POWER_MONITOR_BOTH) {
+            if (ina238_read_measurements(&ina238_dev, &measurements) != 0) {
+                measurements.valid = false;
+            }
+
+            /* Calculate battery percentage and publish MQTT for INA238 */
+            if (measurements.valid) {
+                battery_percentage = battery_calculate_percentage(measurements.bus_voltage, &battery_config);
+                mqtt_publish_power_data(&measurements, battery_percentage, &battery_config);
+            }
         }
 
-        /* Calculate battery percentage here so it's available for both display and MQTT */
-        if (measurements.valid) {
-            battery_percentage = battery_calculate_percentage(measurements.bus_voltage, &battery_config);
-            mqtt_publish_power_data(&measurements, battery_percentage, &battery_config);
+        /* Read measurements from INA3221 if enabled */
+        if (power_monitor == POWER_MONITOR_INA3221 || power_monitor == POWER_MONITOR_BOTH) {
+            if (ina3221_read_measurements(&ina3221_dev, &ina3221_measurements) != 0) {
+                ina3221_measurements.valid = false;
+            }
+
+            /* Publish MQTT for INA3221 */
+            if (ina3221_measurements.valid) {
+                mqtt_publish_ina3221_data(&ina3221_measurements);
+            }
         }
 
         /* Read CPU usage */
@@ -576,8 +832,14 @@ int main(int argc, char *argv[])
         }
 
         if (!service_mode) {
-            /* Update display */
-            print_measurements(&measurements, &ark_info, &battery_config, &system_metrics);
+           /* Update display based on which power monitors are active */
+            if (power_monitor == POWER_MONITOR_BOTH) {
+                print_combined_measurements(&measurements, &ina3221_measurements, &ark_info, &battery_config, &system_metrics);
+            } else if (power_monitor == POWER_MONITOR_INA238) {
+                print_ina238_measurements(&measurements, &ark_info, &battery_config, &system_metrics);
+            } else if (power_monitor == POWER_MONITOR_INA3221) {
+                print_ina3221_measurements(&ina3221_measurements, &ark_info, &system_metrics);
+            }
         }
 
         /* Sleep for specified interval */
@@ -591,7 +853,12 @@ int main(int argc, char *argv[])
     memory_monitor_cleanup();
     fan_monitor_cleanup();
     mqtt_cleanup();
-    ina238_close(&ina238_dev);
+    if (power_monitor == POWER_MONITOR_INA238 || power_monitor == POWER_MONITOR_BOTH) {
+        ina238_close(&ina238_dev);
+    }
+    if (power_monitor == POWER_MONITOR_INA3221 || power_monitor == POWER_MONITOR_BOTH) {
+        ina3221_close(&ina3221_dev);
+    }
     close_logging();
     
     return EXIT_SUCCESS;
