@@ -235,7 +235,7 @@ static void print_header(const ark_board_info_t *ark_info, const battery_config_
 }
 
 /**
- * @brief Print system monitoring informatiom
+ * @brief Print system monitoring information
  */
 static void print_system_monitoring(const system_metrics_t *sys_metrics)
 {
