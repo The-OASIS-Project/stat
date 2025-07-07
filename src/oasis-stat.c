@@ -206,6 +206,52 @@ static void print_usage(const char *prog_name)
 }
 
 /**
+ * @brief Print application header with board information
+ */
+static void print_header(const ark_board_info_t *ark_info, const battery_config_t *battery)
+{
+    printf("\033[2J\033[H"); // Clear screen and move cursor to top
+
+    /* Print header */
+    printf("═══════════════════════════════════════════════════════════════\n");
+    printf("  STAT - System Telemetry and Analytics Tracker v%d.%d.%d\n",
+           STAT_VERSION_MAJOR, STAT_VERSION_MINOR, STAT_VERSION_PATCH);
+    printf("  OASIS Hardware Monitoring and Telemetry Collection\n");
+    printf("═══════════════════════════════════════════════════════════════\n");
+    if (ark_info->detected) {
+        printf("Platform: ARK Jetson Carrier (S/N: %s)\n", ark_info->serial_number);
+    } else {
+        printf("Platform: Unknown Linux System\n");
+    }
+    if (battery != NULL) {
+      printf("Battery: %s (%.1fV - %.1fV)\n", battery->name, battery->min_voltage, battery->max_voltage);
+    }
+    printf("Status: ONLINE - Telemetry collection active\n");
+    printf("Press Ctrl+C to shutdown STAT\n\n");
+
+    /* Print telemetry data */
+    printf("\nSYSTEM TELEMETRY DATA\n");
+    printf("━━━━━━━━━━━━━━━━━━━━━\n\n");
+}
+
+/**
+ * @brief Print system monitoring informatiom
+ */
+static void print_system_monitoring(const system_metrics_t *sys_metrics)
+{
+   /* System section */
+   printf("SYSTEM MONITORING\n");
+   printf("  CPU Usage:    %6.1f%%\n", sys_metrics->cpu_usage);
+   printf("  Memory Usage: %6.1f%%\n", sys_metrics->memory_usage);
+   if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
+      printf("  Fan Speed:    %6d RPM (%d%%)\n", sys_metrics->fan_rpm, sys_metrics->fan_load);
+   } else {
+      printf("  Fan Speed:    Not available\n");
+   }
+   printf("\n");
+}
+
+/**
  * @brief Get battery status string based on percentage
  */
 static const char* get_battery_status(float percentage, const battery_config_t *battery)
@@ -227,27 +273,7 @@ static void print_ina238_measurements(const ina238_measurements_t *measurements,
                               const battery_config_t *battery,
                               const system_metrics_t *sys_metrics)
 {
-   printf("\033[2J\033[H");  // Clear screen and move cursor to top
-
-   /* Print header */
-   printf("═══════════════════════════════════════════════════════════════\n");
-   printf("  STAT - System Telemetry and Analytics Tracker v%d.%d.%d\n",
-           STAT_VERSION_MAJOR, STAT_VERSION_MINOR, STAT_VERSION_PATCH);
-   printf("  OASIS Hardware Monitoring and Telemetry Collection\n");
-   printf("═══════════════════════════════════════════════════════════════\n");
-   if (ark_info->detected) {
-      printf("Platform: ARK Jetson Carrier (S/N: %s)\n", ark_info->serial_number);
-   } else {
-      printf("Platform: Generic Linux System\n");
-   }
-   printf("Power Monitor: INA238 (Single-Channel)\n");
-   printf("Battery: %s (%.1fV - %.1fV)\n", battery->name, battery->min_voltage, battery->max_voltage);
-   printf("Status: ONLINE - Telemetry collection active\n");
-   printf("Press Ctrl+C to shutdown STAT\n\n");
-
-   /* Print telemetry data */
-   printf("SYSTEM TELEMETRY DATA\n");
-   printf("━━━━━━━━━━━━━━━━━━━━━\n\n");
+   print_header(ark_info, battery);
 
    /* Power section */
    if (measurements->valid) {
@@ -284,18 +310,9 @@ static void print_ina238_measurements(const ina238_measurements_t *measurements,
       printf("Check I2C connection and device power\n\n");
    }
 
-   /* System section */
-   printf("SYSTEM MONITORING\n");
-   printf("  CPU Usage:    %6.1f%%\n", sys_metrics->cpu_usage);
-   printf("  Memory Usage: %6.1f%%\n", sys_metrics->memory_usage);
-   if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
-      printf("  Fan Speed:    %6d RPM (%d%%)\n", sys_metrics->fan_rpm, sys_metrics->fan_load);
-   } else {
-      printf("  Fan Speed:    Not available\n");
-   }
-   printf("\n");
+   print_system_monitoring(sys_metrics);
 
-   printf("[STAT] Telemetry broadcast ready for OASIS network consumption\n");
+   printf("[STAT] Telemetry broadcast to MQTT subscribers.\n");
 }
 
 /**
@@ -305,26 +322,7 @@ static void print_ina3221_measurements(const ina3221_measurements_t *ina3221_mea
                                       const ark_board_info_t *ark_info,
                                       const system_metrics_t *sys_metrics)
 {
-   printf("\033[2J\033[H");  // Clear screen and move cursor to top
-
-   /* Print header */
-   printf("═══════════════════════════════════════════════════════════════\n");
-   printf("  STAT - System Telemetry and Analytics Tracker v%d.%d.%d\n",
-           STAT_VERSION_MAJOR, STAT_VERSION_MINOR, STAT_VERSION_PATCH);
-   printf("  OASIS Hardware Monitoring and Telemetry Collection\n");
-   printf("═══════════════════════════════════════════════════════════════\n");
-   if (ark_info->detected) {
-      printf("Platform: ARK Jetson Carrier (S/N: %s)\n", ark_info->serial_number);
-   } else {
-      printf("Platform: Generic Linux System\n");
-   }
-   printf("Power Monitor: INA3221 (3-Channel)\n");
-   printf("Status: ONLINE - Telemetry collection active\n");
-   printf("Press Ctrl+C to shutdown STAT\n\n");
-
-   /* Print telemetry data */
-   printf("SYSTEM TELEMETRY DATA\n");
-   printf("━━━━━━━━━━━━━━━━━━━━━\n\n");
+   print_header(ark_info, NULL);
 
    /* Multi-channel power section */
    if (ina3221_measurements->valid) {
@@ -345,18 +343,9 @@ static void print_ina3221_measurements(const ina3221_measurements_t *ina3221_mea
       printf("Check sysfs interface and device power\n\n");
    }
 
-   /* System section */
-   printf("SYSTEM MONITORING\n");
-   printf("  CPU Usage:    %6.1f%%\n", sys_metrics->cpu_usage);
-   printf("  Memory Usage: %6.1f%%\n", sys_metrics->memory_usage);
-   if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
-      printf("  Fan Speed:    %6d RPM (%d%%)\n", sys_metrics->fan_rpm, sys_metrics->fan_load);
-   } else {
-      printf("  Fan Speed:    Not available\n");
-   }
-   printf("\n");
+   print_system_monitoring(sys_metrics);
 
-   printf("[STAT] Telemetry broadcast ready for OASIS network consumption\n");
+   printf("[STAT] Telemetry broadcast to MQTT subscribers.\n");
 }
 
 /**
@@ -368,27 +357,7 @@ static void print_combined_measurements(const ina238_measurements_t *ina238_meas
                                        const battery_config_t *battery,
                                        const system_metrics_t *sys_metrics)
 {
-   printf("\033[2J\033[H");  // Clear screen and move cursor to top
-
-   /* Print header */
-   printf("═══════════════════════════════════════════════════════════════\n");
-   printf("  STAT - System Telemetry and Analytics Tracker v%d.%d.%d\n",
-           STAT_VERSION_MAJOR, STAT_VERSION_MINOR, STAT_VERSION_PATCH);
-   printf("  OASIS Hardware Monitoring and Telemetry Collection\n");
-   printf("═══════════════════════════════════════════════════════════════\n");
-   if (ark_info->detected) {
-      printf("Platform: ARK Jetson Carrier (S/N: %s)\n", ark_info->serial_number);
-   } else {
-      printf("Platform: Generic Linux System\n");
-   }
-   printf("Power Monitors: INA238 + INA3221\n");
-   printf("Battery: %s (%.1fV - %.1fV)\n", battery->name, battery->min_voltage, battery->max_voltage);
-   printf("Status: ONLINE - Telemetry collection active\n");
-   printf("Press Ctrl+C to shutdown STAT\n\n");
-
-   /* Print telemetry data */
-   printf("SYSTEM TELEMETRY DATA\n");
-   printf("━━━━━━━━━━━━━━━━━━━━━\n\n");
+   print_header(ark_info, battery);
 
    /* INA238 Battery Power section */
    if (ina238_measurements->valid) {
@@ -440,18 +409,9 @@ static void print_combined_measurements(const ina238_measurements_t *ina238_meas
       printf("SYSTEM POWER (INA3221): ERROR\n\n");
    }
 
-   /* System section */
-   printf("SYSTEM MONITORING\n");
-   printf("  CPU Usage:    %6.1f%%\n", sys_metrics->cpu_usage);
-   printf("  Memory Usage: %6.1f%%\n", sys_metrics->memory_usage);
-   if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
-      printf("  Fan Speed:    %6d RPM (%d%%)\n", sys_metrics->fan_rpm, sys_metrics->fan_load);
-   } else {
-      printf("  Fan Speed:    Not available\n");
-   }
-   printf("\n");
+   print_system_monitoring(sys_metrics);
 
-   printf("[STAT] Telemetry broadcast ready for OASIS network consumption\n");
+   printf("[STAT] Telemetry broadcast to MQTT subscribers.\n");
 }
 
 /**
