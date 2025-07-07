@@ -32,6 +32,7 @@
 #include "mqtt_publisher.h"
 #include "logging.h"
 #include "ina238.h"
+#include "ina3221.h"
 
 /* Forward declaration of battery_config_t */
 struct battery_config_t;
@@ -113,8 +114,7 @@ int mqtt_init(const char *host, int port, const char *topic)
    return 0;
 }
 
-/* Make sure this function signature exactly matches the one in mqtt_publisher.h */
-int mqtt_publish_power_data(const ina238_measurements_t *measurements,
+int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
                           float battery_percentage,
                           const battery_config_t *battery)
 {
@@ -136,7 +136,8 @@ int mqtt_publish_power_data(const ina238_measurements_t *measurements,
     struct json_object *root = json_object_new_object();
 
     /* Add device type and measurements */
-    json_object_object_add(root, "device", json_object_new_string("Power"));
+    json_object_object_add(root, "device", json_object_new_string("Battery"));
+    json_object_object_add(root, "chip", json_object_new_string("INA238"));
     json_object_object_add(root, "voltage", json_object_new_double(measurements->bus_voltage));
     json_object_object_add(root, "current", json_object_new_double(measurements->current));
     json_object_object_add(root, "power", json_object_new_double(measurements->power));
@@ -189,6 +190,61 @@ int mqtt_publish_power_data(const ina238_measurements_t *measurements,
     json_object_put(root);
 
     return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
+}
+
+/**
+ * @brief Publish INA3221 multi-channel power data to MQTT (simplified)
+ *
+ * @param measurements INA3221 measurements from all channels
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_ina3221_data(const ina3221_measurements_t *measurements)
+{
+   if (!mqtt_initialized || !mosq || !measurements->valid) {
+      return -1;
+   }
+
+   /* Create JSON object */
+   struct json_object *root = json_object_new_object();
+   struct json_object *channels_array = json_object_new_array();
+
+   /* Add device type */
+   json_object_object_add(root, "device", json_object_new_string("SystemPower"));
+   json_object_object_add(root, "chip", json_object_new_string("INA3221"));
+   json_object_object_add(root, "num_channels", json_object_new_int(measurements->num_channels));
+
+   /* Add each channel */
+   for (int i = 0; i < measurements->num_channels; i++) {
+      const ina3221_channel_t *ch = &measurements->channels[i];
+
+      if (!ch->valid) continue;
+
+      struct json_object *channel_obj = json_object_new_object();
+      json_object_object_add(channel_obj, "channel", json_object_new_int(ch->channel));
+      json_object_object_add(channel_obj, "label", json_object_new_string(ch->label));
+      json_object_object_add(channel_obj, "voltage", json_object_new_double(ch->voltage));
+      json_object_object_add(channel_obj, "current", json_object_new_double(ch->current));
+      json_object_object_add(channel_obj, "power", json_object_new_double(ch->power));
+      json_object_object_add(channel_obj, "shunt_resistor", json_object_new_double(ch->shunt_resistor));
+
+      json_object_array_add(channels_array, channel_obj);
+   }
+
+   json_object_object_add(root, "channels", channels_array);
+
+   /* Convert to JSON string */
+   const char *json_str = json_object_to_json_string(root);
+
+   /* Publish to MQTT */
+   int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
+   if (rc != MOSQ_ERR_SUCCESS) {
+      OLOG_ERROR("MQTT: Failed to publish INA3221 message: %s", mosquitto_strerror(rc));
+   }
+
+   /* Free JSON object */
+   json_object_put(root);
+
+   return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
 }
 
 /**
