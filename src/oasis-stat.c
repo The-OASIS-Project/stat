@@ -745,6 +745,9 @@ int main(int argc, char *argv[])
     if (ina238_dev.initialized) {
         ina238_print_status(&ina238_dev);
     }
+    if (ina3221_dev.initialized) {
+        ina3221_print_status(&ina3221_dev);
+    }
     
     /* Main monitoring loop */
     while (g_running) {
