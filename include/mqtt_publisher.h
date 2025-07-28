@@ -26,6 +26,8 @@
 #define MQTT_PUBLISHER_H
 
 #include <stdbool.h>
+
+#include "daly_bms.h"
 #include "ina238.h"
 #include "ina3221.h"
 #include "battery_model.h"
@@ -64,6 +66,14 @@ int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
  * @return int 0 on success, negative on error
  */
 int mqtt_publish_ina3221_data(const ina3221_measurements_t *measurements);
+
+/**
+ * @brief Publish Daly BMS data to MQTT
+ *
+ * @param daly_dev Pointer to Daly BMS device
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_daly_bms_data(const daly_device_t *daly_dev);
 
 /**
  * @brief Publish CPU monitoring data to MQTT

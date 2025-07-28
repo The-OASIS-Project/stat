@@ -248,6 +248,111 @@ int mqtt_publish_ina3221_data(const ina3221_measurements_t *measurements)
 }
 
 /**
+ * @brief Publish Daly BMS data to MQTT
+ *
+ * @param daly_dev Pointer to Daly BMS device
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_daly_bms_data(const daly_device_t *daly_dev)
+{
+   if (!mqtt_initialized || !mosq || !daly_dev || !daly_dev->initialized || !daly_dev->data.valid) {
+      return -1;
+   }
+
+   const daly_data_t *data = &daly_dev->data;
+
+   /* Create JSON object */
+   struct json_object *root = json_object_new_object();
+   struct json_object *cells_array = json_object_new_array();
+   struct json_object *temps_array = json_object_new_array();
+   struct json_object *faults_array = json_object_new_array();
+
+   /* Add device type */
+   json_object_object_add(root, "device", json_object_new_string("DalyBMS"));
+
+   /* Add pack information */
+   json_object_object_add(root, "voltage", json_object_new_double(data->pack.v_total_v));
+   json_object_object_add(root, "current", json_object_new_double(data->pack.current_a));
+   json_object_object_add(root, "power", json_object_new_double(data->pack.v_total_v * data->pack.current_a));
+   json_object_object_add(root, "soc", json_object_new_double(data->pack.soc_pct));
+
+   /* Add MOS status */
+   json_object_object_add(root, "charge_fet", json_object_new_boolean(data->mos.charge_mos));
+   json_object_object_add(root, "discharge_fet", json_object_new_boolean(data->mos.discharge_mos));
+
+   /* Add battery statistics */
+   json_object_object_add(root, "cycles", json_object_new_int(data->mos.life_cycles));
+   json_object_object_add(root, "remaining_capacity_mah", json_object_new_int(data->mos.remain_capacity_mah));
+
+   /* Add cell information */
+   json_object_object_add(root, "cell_count", json_object_new_int(data->status.cell_count));
+   json_object_object_add(root, "vmax", json_object_new_double(data->extremes.vmax_v));
+   json_object_object_add(root, "vmax_cell", json_object_new_int(data->extremes.vmax_cell));
+   json_object_object_add(root, "vmin", json_object_new_double(data->extremes.vmin_v));
+   json_object_object_add(root, "vmin_cell", json_object_new_int(data->extremes.vmin_cell));
+   json_object_object_add(root, "vdelta", json_object_new_double(data->extremes.vmax_v - data->extremes.vmin_v));
+
+   /* Add temperature information */
+   json_object_object_add(root, "temp_count", json_object_new_int(data->temps.ntc_count));
+   json_object_object_add(root, "tmax", json_object_new_double(data->temps.tmax_c));
+   json_object_object_add(root, "tmax_sensor", json_object_new_int(data->temps.tmax_idx));
+   json_object_object_add(root, "tmin", json_object_new_double(data->temps.tmin_c));
+   json_object_object_add(root, "tmin_sensor", json_object_new_int(data->temps.tmin_idx));
+
+   /* Add derived state information */
+   int state = daly_bms_infer_state(data->pack.current_a, data->mos.charge_mos,
+                                   data->mos.discharge_mos, DALY_CURRENT_DEADBAND);
+   json_object_object_add(root, "state", json_object_new_string(
+      state == DALY_STATE_CHARGE ? "charging" :
+      state == DALY_STATE_DISCHARGE ? "discharging" : "idle"));
+
+   /* Add charger and load presence */
+   bool charger_present = daly_bms_infer_charger(data->pack.current_a, data->mos.charge_mos, DALY_CURRENT_DEADBAND);
+   bool load_present = daly_bms_infer_load(data->pack.current_a, data->mos.discharge_mos, DALY_CURRENT_DEADBAND);
+   json_object_object_add(root, "charger_present", json_object_new_boolean(charger_present));
+   json_object_object_add(root, "load_present", json_object_new_boolean(load_present));
+
+   /* Add cell voltages array */
+   for (int i = 0; i < data->status.cell_count && i < DALY_MAX_CELLS; i++) {
+      struct json_object *cell_obj = json_object_new_object();
+      json_object_object_add(cell_obj, "index", json_object_new_int(i + 1));
+      json_object_object_add(cell_obj, "voltage", json_object_new_double(data->cell_mv[i] / 1000.0));
+      json_object_object_add(cell_obj, "balance", json_object_new_boolean(data->balance[i]));
+      json_object_array_add(cells_array, cell_obj);
+   }
+   json_object_object_add(root, "cells", cells_array);
+
+   /* Add temperature sensors array */
+   for (int i = 0; i < data->temps.ntc_count && i < DALY_MAX_TEMPS; i++) {
+      struct json_object *temp_obj = json_object_new_object();
+      json_object_object_add(temp_obj, "index", json_object_new_int(i + 1));
+      json_object_object_add(temp_obj, "temperature", json_object_new_double(data->temps.sensors_c[i]));
+      json_object_array_add(temps_array, temp_obj);
+   }
+   json_object_object_add(root, "temperatures", temps_array);
+
+   /* Add faults array */
+   for (int i = 0; i < data->fault_count; i++) {
+      json_object_array_add(faults_array, json_object_new_string(data->faults[i]));
+   }
+   json_object_object_add(root, "faults", faults_array);
+
+   /* Convert to JSON string */
+   const char *json_str = json_object_to_json_string(root);
+
+   /* Publish to MQTT */
+   int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
+   if (rc != MOSQ_ERR_SUCCESS) {
+      OLOG_ERROR("MQTT: Failed to publish Daly BMS message: %s", mosquitto_strerror(rc));
+   }
+
+   /* Free JSON object */
+   json_object_put(root);
+
+   return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
+}
+
+/**
  * @brief Publish CPU monitoring data to MQTT
  *
  * @param cpu_usage CPU usage percentage (0-100)

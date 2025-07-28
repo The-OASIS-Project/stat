@@ -41,6 +41,7 @@
 
 #include "ark_detection.h"
 #include "cpu_monitor.h"
+#include "daly_bms.h"
 #include "fan_monitor.h"
 #include "i2c_utils.h"
 #include "ina238.h"
@@ -98,6 +99,12 @@ typedef struct {
 
 /* Global Variables */
 static volatile bool g_running = true;
+static bool bms_enable = false;
+static const char *bms_port = "/dev/ttyTHS1";
+static int bms_baud = DALY_DEFAULT_BAUD;
+static int bms_interval_ms = 1000;
+static int bms_capacity = 0;
+static float bms_soc = -1.0f;
 
 /* Function Prototypes */
 static void print_usage(const char *prog_name);
@@ -183,6 +190,13 @@ static void print_usage(const char *prog_name)
     printf("  ina238  - Use INA238 single-channel power monitor (I2C direct)\n");
     printf("  ina3221 - Use INA3221 3-channel power monitor (sysfs/hwmon)\n");
     printf("  both    - Use both INA238 and INA3221 simultaneously\n");
+    printf("\nDaly BMS Options:\n");
+    printf("      --bms-enable         Enable Daly BMS monitoring\n");
+    printf("      --bms-port PORT      Serial port for BMS (default: /dev/ttyTHS1)\n");
+    printf("      --bms-baud BAUD      Baud rate (default: %d)\n", DALY_DEFAULT_BAUD);
+    printf("      --bms-interval MS    Polling interval in ms (default: 1000)\n");
+    printf("      --bms-set-capacity N Set BMS rated capacity in mAh\n");
+    printf("      --bms-set-soc PCT    Set BMS state of charge (0-100)\n");
     printf("\nExamples:\n");
     printf("  ./oasis-stat                           # Auto-detect power monitors\n");
     printf("  ./oasis-stat --monitor ina3221         # Force INA3221 3-channel monitoring\n");
@@ -324,6 +338,66 @@ static void print_ina3221_measurements(const ina3221_measurements_t *ina3221_mea
 }
 
 /**
+ * @brief Print Daly BMS data to screen
+ */
+static void print_daly_bms_data(const daly_device_t *daly_dev) {
+    if (!daly_dev || !daly_dev->initialized || !daly_dev->data.valid) {
+        printf("DALY BMS: Not available or no valid data\n\n");
+        return;
+    }
+
+    const daly_data_t *data = &daly_dev->data;
+
+    printf("DALY BMS STATUS\n");
+    printf("  Voltage:      %8.2f V\n", data->pack.v_total_v);
+    printf("  Current:      %8.2f A\n", data->pack.current_a);
+    printf("  Power:        %8.2f W\n", data->pack.v_total_v * data->pack.current_a);
+    printf("  SOC:          %8.1f%%\n", data->pack.soc_pct);
+
+    /* Derived state */
+    int state = daly_bms_infer_state(data->pack.current_a, data->mos.charge_mos,
+                                     data->mos.discharge_mos, DALY_CURRENT_DEADBAND);
+    printf("  State:        %s\n", state == DALY_STATE_CHARGE ? "Charging" :
+                                 state == DALY_STATE_DISCHARGE ? "Discharging" : "Idle");
+
+    printf("  FETs:         CHG=%s  DSG=%s\n",
+           data->mos.charge_mos ? "On" : "Off",
+           data->mos.discharge_mos ? "On" : "Off");
+
+    printf("  Cells:        %d  (%.3f - %.3f V, Δ=%.3f V)\n",
+           data->status.cell_count,
+           data->extremes.vmin_v, data->extremes.vmax_v,
+           data->extremes.vmax_v - data->extremes.vmin_v);
+
+    printf("  Temperature:  %.1f - %.1f °C\n",
+           data->temps.tmin_c, data->temps.tmax_c);
+
+    printf("  Cycles:       %d\n", data->mos.life_cycles);
+
+    /* Balance status */
+    int balance_count = 0;
+    for (int i = 0; i < data->status.cell_count; i++) {
+        if (data->balance[i]) balance_count++;
+    }
+    printf("  Balancing:    %d cells\n", balance_count);
+
+    /* Faults */
+    if (data->fault_count > 0) {
+        printf("  Faults:       %d active faults\n", data->fault_count);
+        for (int i = 0; i < data->fault_count && i < 3; i++) { // Show first 3 faults
+            printf("    - %s\n", data->faults[i]);
+        }
+        if (data->fault_count > 3) {
+            printf("    - ... and %d more\n", data->fault_count - 3);
+        }
+    } else {
+        printf("  Faults:       None\n");
+    }
+
+    printf("\n");
+}
+
+/**
  * @brief Main application entry point
  */
 int main(int argc, char *argv[])
@@ -372,6 +446,12 @@ int main(int argc, char *argv[])
         {"battery-chemistry", required_argument, 0, 1007},
         {"battery-cells",     required_argument, 0, 1008},
         {"battery-parallel",  required_argument, 0, 1009},
+        {"bms-enable",        no_argument,       0, 2000},
+        {"bms-port",          required_argument, 0, 2001},
+        {"bms-baud",          required_argument, 0, 2002},
+        {"bms-interval",      required_argument, 0, 2003},
+        {"bms-set-capacity",  required_argument, 0, 2004},
+        {"bms-set-soc",       required_argument, 0, 2005},
         {"mqtt-host",         required_argument, 0, 'H'},
         {"mqtt-port",         required_argument, 0, 'P'},
         {"mqtt-topic",        required_argument, 0, 'T'},
@@ -487,6 +567,40 @@ int main(int argc, char *argv[])
                 battery_config.cells_parallel = atoi(optarg);
                 custom_battery = true;
                 break;
+            case 2000: // --bms-enable
+                bms_enable = true;
+                break;
+            case 2001: // --bms-port
+                bms_port = optarg;
+                break;
+            case 2002: // --bms-baud
+                bms_baud = atoi(optarg);
+                if (bms_baud <= 0) {
+                    OLOG_ERROR("Error: Invalid BMS baud rate");
+                    return EXIT_FAILURE;
+                }
+                break;
+            case 2003: // --bms-interval
+                bms_interval_ms = atoi(optarg);
+                if (bms_interval_ms < 100 || bms_interval_ms > 10000) {
+                    OLOG_ERROR("Error: BMS interval must be between 100 and 10000 ms");
+                    return EXIT_FAILURE;
+                }
+                break;
+            case 2004: // --bms-set-capacity
+                bms_capacity = atoi(optarg);
+                if (bms_capacity <= 0) {
+                    OLOG_ERROR("Error: Invalid BMS capacity");
+                    return EXIT_FAILURE;
+                }
+                break;
+            case 2005: // --bms-set-soc
+                bms_soc = atof(optarg);
+                if (bms_soc < 0.0f || bms_soc > 100.0f) {
+                    OLOG_ERROR("Error: BMS SOC must be between 0 and 100");
+                    return EXIT_FAILURE;
+                }
+                break;
             case 'm': // --monitor
                 if (strcmp(optarg, "ina238") == 0) {
                     power_monitor = POWER_MONITOR_INA238;
@@ -581,6 +695,37 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* Initialize Daly BMS if enabled */
+    daly_device_t daly_dev;
+    if (bms_enable) {
+       /* Initialize BMS */
+       if (daly_bms_init(&daly_dev, bms_port, bms_baud, 500) < 0) {
+           OLOG_ERROR("Error: Failed to initialize Daly BMS");
+           bms_enable = false;
+       } else {
+           OLOG_INFO("Daly BMS initialized successfully");
+           
+           /* Handle optional one-time operations */
+           if (bms_capacity > 0) {
+               OLOG_INFO("Setting Daly BMS capacity to %d mAh", bms_capacity);
+               if (daly_bms_write_capacity(&daly_dev, bms_capacity, 3600) < 0) {
+                   OLOG_ERROR("Failed to set Daly BMS capacity");
+               } else {
+                   OLOG_INFO("Daly BMS capacity set successfully");
+               }
+           }
+           
+           if (bms_soc >= 0.0f) {
+               OLOG_INFO("Setting Daly BMS SOC to %.1f%%", bms_soc);
+               if (daly_bms_write_soc(&daly_dev, bms_soc) < 0) {
+                   OLOG_ERROR("Failed to set Daly BMS SOC");
+               } else {
+                   OLOG_INFO("Daly BMS SOC set successfully");
+               }
+           }
+       }
+    }
+
     /* Initialize logging based on mode */
     if (service_mode) {
         // Initialize syslog for service mode
@@ -658,6 +803,8 @@ int main(int argc, char *argv[])
         ina3221_print_status(&ina3221_dev);
     }
     
+    static time_t last_bms_poll = 0;
+
     /* Main monitoring loop */
     while (g_running) {
         float battery_percentage = 0.0F;
@@ -684,6 +831,18 @@ int main(int argc, char *argv[])
             /* Publish MQTT for INA3221 */
             if (ina3221_measurements.valid) {
                 mqtt_publish_ina3221_data(&ina3221_measurements);
+            }
+        }
+
+        /* Read from Daly BMS if enabled */
+        if (bms_enable) {
+            time_t now = time(NULL);
+            if (now - last_bms_poll >= (bms_interval_ms / 1000)) {
+                if (daly_bms_poll(&daly_dev) == 0) {
+                    /* Publish BMS data to MQTT */
+                    mqtt_publish_daly_bms_data(&daly_dev);
+                    last_bms_poll = now;
+                }
             }
         }
 
@@ -719,6 +878,11 @@ int main(int argc, char *argv[])
                 print_ina3221_measurements(&ina3221_measurements);
             }
 
+            /* Print Daly BMS data if enabled */
+            if (bms_enable) {
+                print_daly_bms_data(&daly_dev);
+            }
+
             print_system_monitoring(&system_metrics);
 
             printf("[STAT] Telemetry broadcast to MQTT subscribers.\n");
@@ -740,6 +904,9 @@ int main(int argc, char *argv[])
     }
     if (power_monitor == POWER_MONITOR_INA3221 || power_monitor == POWER_MONITOR_BOTH) {
         ina3221_close(&ina3221_dev);
+    }
+    if (bms_enable) {
+        daly_bms_close(&daly_dev);
     }
     close_logging();
     

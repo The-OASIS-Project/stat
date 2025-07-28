@@ -32,6 +32,7 @@ set(SOURCES
    src/ark_detection.c
    src/battery_model.c
    src/cpu_monitor.c
+   src/daly_bms.c
    src/fan_monitor.c
    src/i2c_utils.c
    src/ina238.c
@@ -47,6 +48,7 @@ set(HEADERS
    include/ark_detection.h
    include/battery_model.h
    include/cpu_monitor.h
+   include/daly_bms.h
    include/fan_monitor.h
    include/i2c_utils.h
    include/ina238.h
