@@ -55,6 +55,19 @@
 #define MIN_SAMPLING_INTERVAL_MS        100
 #define MAX_SAMPLING_INTERVAL_MS        10000
 
+typedef enum {
+   BAT_4S_LI_ION,
+   BAT_5S_LI_ION,
+   BAT_6S_LI_ION,
+   BAT_2S_LIPO,
+   BAT_3S_LIPO,
+   BAT_6S_LIPO,
+   BAT_4S2P_SAMSUNG50E,
+   BAT_3S_5200MAH_LIPO,
+   BAT_3S_2200MAH_LIPO,
+   BAT_3S_1500MAH_LIPO
+} stat_battery_t;
+
 /* Predefined battery configurations */
 static const battery_config_t battery_configs[] = {
     /* Standard Li-ion configurations */
@@ -100,7 +113,7 @@ typedef struct {
 /* Global Variables */
 static volatile bool g_running = true;
 static bool bms_enable = false;
-static const char *bms_port = "/dev/ttyTHS1";
+static char bms_port[64];
 static int bms_baud = DALY_DEFAULT_BAUD;
 static int bms_interval_ms = 1000;
 static int bms_capacity = 0;
@@ -611,6 +624,8 @@ int main(int argc, char *argv[])
     int mqtt_port = MQTT_DEFAULT_PORT;
     char mqtt_topic[64] = MQTT_DEFAULT_TOPIC;
 
+    snprintf(bms_port, sizeof(bms_port), "%s", "/dev/ttyTHS1");
+
     /* Option parsing */
     static struct option long_options[] = {
         {"bus",               required_argument, 0, 'b'},
@@ -660,7 +675,7 @@ int main(int argc, char *argv[])
     }
 
     // Set default battery config: "4S2P_Samsung50E"
-    memcpy(&battery_config, &battery_configs[6], sizeof(battery_config_t));
+    memcpy(&battery_config, &battery_configs[BAT_4S2P_SAMSUNG50E], sizeof(battery_config_t));
     
     /* Parse command line arguments (can override auto-detected defaults) */
     int opt;
@@ -756,7 +771,7 @@ int main(int argc, char *argv[])
                 bms_enable = true;
                 break;
             case 2001: // --bms-port
-                bms_port = optarg;
+                snprintf(bms_port, sizeof(bms_port), "%s", optarg);
                 break;
             case 2002: // --bms-baud
                 bms_baud = atoi(optarg);
@@ -902,7 +917,7 @@ int main(int argc, char *argv[])
         if (daly_bms_auto_detect(detected_port, &detected_baud)) {
             OLOG_INFO("Auto-detected Daly BMS on %s at %d baud", detected_port, detected_baud);
             bms_enable = true;
-            bms_port = strdup(detected_port);  /* Use detected port */
+            snprintf(bms_port, sizeof(bms_port), "%s", detected_port);
             bms_baud = detected_baud;          /* Use detected baud rate */
         }
     }

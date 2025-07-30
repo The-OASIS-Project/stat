@@ -1234,7 +1234,52 @@ int daly_bms_analyze_health(daly_device_t *dev, daly_pack_health_t *health,
         }
     }
 
-    /* Rest of the function remains the same... */
+    /* Determine overall status */
+    health->overall_status = DALY_HEALTH_NORMAL;
+
+    /* First check if any cells are in critical state */
+    for (int i = 0; i < cell_count; i++) {
+        if (health->cells[i].status == DALY_HEALTH_CRITICAL) {
+            health->overall_status = DALY_HEALTH_CRITICAL;
+            snprintf(health->status_reason, sizeof(health->status_reason),
+                    "Cell %d is in critical state", health->cells[i].cell_index);
+            break;
+        }
+    }
+
+    /* If not critical, check if any cells are in warning state */
+    if (health->overall_status != DALY_HEALTH_CRITICAL) {
+        for (int i = 0; i < cell_count; i++) {
+            if (health->cells[i].status == DALY_HEALTH_WARNING) {
+                health->overall_status = DALY_HEALTH_WARNING;
+                snprintf(health->status_reason, sizeof(health->status_reason),
+                        "Cell %d is in warning state", health->cells[i].cell_index);
+                break;
+            }
+        }
+    }
+
+    /* Also check voltage delta as another indicator */
+    if (health->overall_status == DALY_HEALTH_NORMAL) {
+        if (health->vdelta * 1000.0f >= critical_threshold_mv) {
+            health->overall_status = DALY_HEALTH_CRITICAL;
+            snprintf(health->status_reason, sizeof(health->status_reason),
+                    "Cell voltage delta (%.0f mV) exceeds critical threshold",
+                    health->vdelta * 1000.0f);
+        } else if (health->vdelta * 1000.0f >= warning_threshold_mv) {
+            health->overall_status = DALY_HEALTH_WARNING;
+            snprintf(health->status_reason, sizeof(health->status_reason),
+                    "Cell voltage delta (%.0f mV) exceeds warning threshold",
+                    health->vdelta * 1000.0f);
+        }
+    }
+
+    /* Check for BMS faults */
+    if (health->overall_status != DALY_HEALTH_CRITICAL && data->fault_count > 0) {
+        health->overall_status = DALY_HEALTH_WARNING;
+        snprintf(health->status_reason, sizeof(health->status_reason),
+                "%d active BMS faults", data->fault_count);
+    }
 
     return health->overall_status;
 }
