@@ -675,7 +675,13 @@ int main(int argc, char *argv[])
     }
 
     // Set default battery config: "4S2P_Samsung50E"
-    memcpy(&battery_config, &battery_configs[BAT_4S2P_SAMSUNG50E], sizeof(battery_config_t));
+    size_t battery_configs_size = sizeof(battery_configs) / sizeof(battery_configs[0]);
+    if (BAT_4S2P_SAMSUNG50E < battery_configs_size) {
+        memcpy(&battery_config, &battery_configs[BAT_4S2P_SAMSUNG50E], sizeof(battery_config_t));
+    } else {
+        OLOG_ERROR("Invalid battery configuration index: %d", BAT_4S2P_SAMSUNG50E);
+        exit(EXIT_FAILURE);
+    }
     
     /* Parse command line arguments (can override auto-detected defaults) */
     int opt;
