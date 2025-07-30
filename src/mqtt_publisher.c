@@ -344,7 +344,8 @@ int mqtt_publish_daly_bms_data(const daly_device_t *daly_dev, const battery_conf
    float raw_time = daly_bms_estimate_runtime(daly_dev, battery);
 
     /* Apply smoothing (source_id 1 for DalyBMS) */
-   float current_abs = -data->pack.current_a;  /* Convert to positive for calculation */
+   /* Ensure the current is treated as positive for runtime calculation */
+   float current_abs = fabsf(data->pack.current_a);
    float smoothed_time = smooth_battery_runtime(raw_time, current_abs, SOURCE_DALYBMS);
 
    /* Format time */

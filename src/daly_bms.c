@@ -889,10 +889,12 @@ int daly_bms_poll(daly_device_t *dev) {
                 if (frame_no != 0 && frame_no != 0xFF && frame_no <= frames_needed) {
                     /* Allocate memory for this frame */
                     uint8_t *frame_data = malloc(8);
-                    if (frame_data) {
-                        memcpy(frame_data, response, 8);
-                        frames[frame_count++] = frame_data;
+                    if (frame_data == NULL) {
+                        snprintf(data->last_err, sizeof(data->last_err), "Memory allocation failed for frame_data");
+                        continue;  // Skip this frame and proceed to the next iteration
                     }
+                    memcpy(frame_data, response, 8);
+                    frames[frame_count++] = frame_data;
                 }
             }
         }
@@ -924,9 +926,11 @@ int daly_bms_poll(daly_device_t *dev) {
                     /* Allocate memory for this frame */
                     uint8_t *frame_data = malloc(8);
                     if (frame_data) {
-                        memcpy(frame_data, response, 8);
-                        frames[frame_count++] = frame_data;
+                        snprintf(data->last_err, sizeof(data->last_err), "Memory allocation failed for frame_data");
+                        continue;  // Skip this frame and proceed to the next iteration
                     }
+                    memcpy(frame_data, response, 8);
+                    frames[frame_count++] = frame_data;
                 }
             }
         }
@@ -1005,7 +1009,7 @@ int daly_bms_write_capacity(daly_device_t *dev, int capacity_mah, int nominal_ce
     payload[6] = (nominal_cell_mv >> 8) & 0xFF;
     payload[7] = nominal_cell_mv & 0xFF;
     
-    int result = daly_request(dev->fd, DALY_CMD_WRITE_CAPACITY, response, 600, payload);
+    int result = daly_request(dev->fd, DALY_CMD_WRITE_CAPACITY, response, dev->timeout_ms, payload);
     if (result != 0) {
         OLOG_ERROR("Failed to write rated capacity");
         return -1;
@@ -1048,7 +1052,7 @@ int daly_bms_write_soc(daly_device_t *dev, float soc_percent) {
     payload[6] = (soc_tenths >> 8) & 0xFF;
     payload[7] = soc_tenths & 0xFF;
     
-    int result = daly_request(dev->fd, DALY_CMD_WRITE_SOC, response, 600, payload);
+    int result = daly_request(dev->fd, DALY_CMD_WRITE_SOC, response, dev->timeout_ms, payload);
     if (result != 0) {
         OLOG_ERROR("Failed to write SOC");
         return -1;
