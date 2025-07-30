@@ -925,7 +925,7 @@ int daly_bms_poll(daly_device_t *dev) {
                 if (frame_no != 0 && frame_no <= frames_needed) {
                     /* Allocate memory for this frame */
                     uint8_t *frame_data = malloc(8);
-                    if (frame_data) {
+                    if (frame_data == NULL) {
                         snprintf(data->last_err, sizeof(data->last_err), "Memory allocation failed for frame_data");
                         continue;  // Skip this frame and proceed to the next iteration
                     }
