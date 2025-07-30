@@ -105,6 +105,8 @@ static int bms_baud = DALY_DEFAULT_BAUD;
 static int bms_interval_ms = 1000;
 static int bms_capacity = 0;
 static float bms_soc = -1.0f;
+static int cell_warning_threshold_mv = DALY_CELL_WARNING_THRESHOLD_MV;
+static int cell_critical_threshold_mv = DALY_CELL_CRITICAL_THRESHOLD_MV;
 
 /* Function Prototypes */
 static void print_usage(const char *prog_name);
@@ -168,6 +170,11 @@ static void print_usage(const char *prog_name)
     printf("  -c, --current MAX      Maximum current in amps (default: 327.68, or 10.0 for ARK)\n");
     printf("  -i, --interval MS      Sampling interval in milliseconds (default: 1000, range: 100-10000)\n");
     printf("  -m, --monitor TYPE     Power monitor type: ina238, ina3221, both, auto (default: auto)\n");
+    printf("\nPower Monitor Types:\n");
+    printf("  auto    - Automatically detect available power monitors (default)\n");
+    printf("  ina238  - Use INA238 single-channel power monitor (I2C direct)\n");
+    printf("  ina3221 - Use INA3221 3-channel power monitor (sysfs/hwmon)\n");
+    printf("  both    - Use both INA238 and INA3221 simultaneously\n\n");
     printf("      --battery TYPE     Battery type (default: 5S_Li-ion)\n");
     printf("      --battery-min V    Custom battery minimum voltage\n");
     printf("      --battery-max V    Custom battery maximum voltage\n");
@@ -185,11 +192,6 @@ static void print_usage(const char *prog_name)
     printf("  -H, --mqtt-host HOST   MQTT broker hostname (default: %s)\n", MQTT_DEFAULT_HOST);
     printf("  -P, --mqtt-port PORT   MQTT broker port (default: %d)\n", MQTT_DEFAULT_PORT);
     printf("  -T, --mqtt-topic TOPIC MQTT topic to publish to (default: %s)\n", MQTT_DEFAULT_TOPIC);
-    printf("\nPower Monitor Types:\n");
-    printf("  auto    - Automatically detect available power monitors (default)\n");
-    printf("  ina238  - Use INA238 single-channel power monitor (I2C direct)\n");
-    printf("  ina3221 - Use INA3221 3-channel power monitor (sysfs/hwmon)\n");
-    printf("  both    - Use both INA238 and INA3221 simultaneously\n");
     printf("\nDaly BMS Options:\n");
     printf("      --bms-enable         Enable Daly BMS monitoring\n");
     printf("      --bms-port PORT      Serial port for BMS (default: /dev/ttyTHS1)\n");
@@ -197,6 +199,8 @@ static void print_usage(const char *prog_name)
     printf("      --bms-interval MS    Polling interval in ms (default: 1000)\n");
     printf("      --bms-set-capacity N Set BMS rated capacity in mAh\n");
     printf("      --bms-set-soc PCT    Set BMS state of charge (0-100)\n");
+    printf("      --bms-warn-thresh MV Cell voltage warning threshold in mV (default: 70)\n");
+    printf("      --bms-crit-thresh MV Cell voltage critical threshold in mV (default: 120)\n");
     printf("\nExamples:\n");
     printf("  ./oasis-stat                           # Auto-detect power monitors\n");
     printf("  ./oasis-stat --monitor ina3221         # Force INA3221 3-channel monitoring\n");
@@ -369,8 +373,23 @@ static void print_daly_bms_data(const daly_device_t *daly_dev) {
            data->extremes.vmin_v, data->extremes.vmax_v,
            data->extremes.vmax_v - data->extremes.vmin_v);
 
-    printf("  Temperature:  %.1f - %.1f °C\n",
-           data->temps.tmin_c, data->temps.tmax_c);
+    /* Show all temperature sensors */
+    printf("  Temperatures:  ");
+    int temps_per_row = 4;  // Adjust based on display width
+    int temp_count = 0;
+
+    for (int i = 0; i < data->temps.ntc_count && i < DALY_MAX_TEMPS; i++) {
+        if (data->temps.sensors_c[i] > -40.0f) {  // Filter out invalid temps (-40 is often a default)
+            printf("T%d: %.1f°C  ", i+1, data->temps.sensors_c[i]);
+            temp_count++;
+
+            // Break line after temps_per_row temperatures
+            if (temp_count % temps_per_row == 0 && i < data->temps.ntc_count - 1) {
+                printf("\n                ");
+            }
+        }
+    }
+    printf("\n");
 
     printf("  Cycles:       %d\n", data->mos.life_cycles);
 
@@ -392,6 +411,170 @@ static void print_daly_bms_data(const daly_device_t *daly_dev) {
         }
     } else {
         printf("  Faults:       None\n");
+    }
+
+    printf("\n");
+}
+
+/**
+ * @brief Print enhanced Daly BMS data to screen
+ */
+static void print_enhanced_daly_data(const daly_device_t *daly_dev,
+                                    const daly_pack_health_t *health,
+                                    const daly_fault_summary_t *fault_summary) {
+    if (!daly_dev || !daly_dev->initialized || !daly_dev->data.valid || !health) {
+        printf("DALY BMS: Not available or no valid data\n\n");
+        return;
+    }
+
+    const daly_data_t *data = &daly_dev->data;
+
+    printf("DALY BMS STATUS\n");
+    printf("  Voltage:      %8.2f V\n", data->pack.v_total_v);
+    printf("  Current:      %8.2f A\n", data->pack.current_a);
+    printf("  Power:        %8.2f W\n", data->pack.v_total_v * data->pack.current_a);
+    printf("  SOC:          %8.1f%%\n", data->pack.soc_pct);
+
+    /* Derived state */
+    int state = daly_bms_infer_state(data->pack.current_a, data->mos.charge_mos,
+                                     data->mos.discharge_mos, DALY_CURRENT_DEADBAND);
+    printf("  State:        %s\n", state == DALY_STATE_CHARGE ? "Charging" :
+                                 state == DALY_STATE_DISCHARGE ? "Discharging" : "Idle");
+
+    printf("  FETs:         CHG=%s  DSG=%s\n",
+           data->mos.charge_mos ? "On" : "Off",
+           data->mos.discharge_mos ? "On" : "Off");
+
+    /* Enhanced health information */
+    printf("  Health:       %s", daly_bms_health_string(health->overall_status));
+    if (health->overall_status != DALY_HEALTH_NORMAL) {
+        printf(" - %s", health->status_reason);
+    }
+    printf("\n");
+
+    /* Show all cell voltages in a table format */
+    printf("  Cell Voltages:\n");
+    printf("    ");
+    int cells_per_row = 4;  // Adjust based on your typical display width
+
+    for (int i = 0; i < health->cell_count; i++) {
+        const daly_cell_health_t *cell = &health->cells[i];
+        char status_indicator = ' ';
+
+        // Add status indicator
+        if (cell->status == DALY_HEALTH_WARNING) {
+            status_indicator = '!';
+        } else if (cell->status == DALY_HEALTH_CRITICAL) {
+            status_indicator = '*';
+        }
+
+        // Print cell with optional balancing indicator
+        printf("C%d: %.3fV%c%s  ",
+              cell->cell_index,
+              cell->voltage,
+              status_indicator,
+              cell->balancing ? "[B]" : "");
+
+        // Break line after cells_per_row cells
+        if ((i + 1) % cells_per_row == 0 && i < health->cell_count - 1) {
+            printf("\n    ");
+        }
+    }
+    printf("\n");
+
+    /* Legend for status indicators */
+    if (health->problem_cell_count > 0) {
+        printf("    Legend: ! = Warning, * = Critical");
+        if (daly_bms_is_balancing(daly_dev)) {
+            printf(", [B] = Balancing");
+        }
+        printf("\n");
+    }
+
+    /* Show problem cells if any */
+    if (health->problem_cell_count > 0) {
+        printf("  Problem Cells: %d\n", health->problem_cell_count);
+        int shown = 0;
+        for (int i = 0; i < health->cell_count && shown < 3; i++) {
+            if (health->cells[i].status != DALY_HEALTH_NORMAL) {
+                printf("    Cell %-2d: %s - %s\n",
+                      health->cells[i].cell_index,
+                      daly_bms_health_string(health->cells[i].status),
+                      health->cells[i].reason);
+                shown++;
+            }
+        }
+        if (health->problem_cell_count > 3) {
+            printf("    ... and %d more problem cells\n", health->problem_cell_count - 3);
+        }
+    }
+
+    /* Show all temperature sensors */
+    printf("  Temperatures:  ");
+    int temps_per_row = 4;  // Adjust based on display width
+    int temp_count = 0;
+
+    for (int i = 0; i < data->temps.ntc_count && i < DALY_MAX_TEMPS; i++) {
+        if (data->temps.sensors_c[i] > -40.0f) {  // Filter out invalid temps (-40 is often a default)
+            printf("T%d: %.1f°C  ", i+1, data->temps.sensors_c[i]);
+            temp_count++;
+
+            // Break line after temps_per_row temperatures
+            if (temp_count % temps_per_row == 0 && i < data->temps.ntc_count - 1) {
+                printf("\n                ");
+            }
+        }
+    }
+    printf("\n");
+
+    printf("  Cycles:       %d%s\n", data->mos.life_cycles,
+           data->mos.life_cycles > 250 ? " (Note: cycles roll over at 255)" : "");
+
+    /* Balance status */
+    bool balancing = daly_bms_is_balancing(daly_dev);
+    printf("  Balancing:    %s\n", balancing ? "Active" : "Inactive");
+
+    /* Faults summary */
+    if (fault_summary->critical_count > 0 || fault_summary->warning_count > 0) {
+        printf("  Faults:       %d critical, %d warning\n",
+              fault_summary->critical_count, fault_summary->warning_count);
+
+        /* Show critical faults first */
+        for (int i = 0; i < fault_summary->critical_count && i < 2; i++) {
+            printf("    CRITICAL: %s\n", fault_summary->critical_faults[i]);
+        }
+
+        /* Then show warnings */
+        for (int i = 0; i < fault_summary->warning_count && i < 2; i++) {
+            printf("    WARNING:  %s\n", fault_summary->warning_faults[i]);
+        }
+
+        /* Indicate if there are more */
+        int total_faults = fault_summary->critical_count + fault_summary->warning_count +
+                          fault_summary->info_count;
+        int shown = MIN(fault_summary->critical_count, 2) + MIN(fault_summary->warning_count, 2);
+
+        if (total_faults > shown) {
+            printf("    ... and %d more faults\n", total_faults - shown);
+        }
+    } else {
+        printf("  Faults:       None\n");
+    }
+
+    /* Runtime estimation */
+    if (data->pack.current_a < -0.1f) {
+        /* Create a dummy battery config for time estimation */
+        battery_config_t batt_config = {
+            .capacity_mah = 10000.0f,  /* Default value, will be overridden if BMS reports capacity */
+            .chemistry = BATT_CHEMISTRY_LIION
+        };
+
+        /* Estimate runtime */
+        float runtime_min = daly_bms_estimate_runtime(daly_dev, &batt_config);
+        int hours = (int)(runtime_min / 60.0f);
+        int minutes = (int)(runtime_min - hours * 60.0f);
+
+        printf("  Est. Runtime: %d:%02d h:m\n", hours, minutes);
     }
 
     printf("\n");
@@ -452,6 +635,8 @@ int main(int argc, char *argv[])
         {"bms-interval",      required_argument, 0, 2003},
         {"bms-set-capacity",  required_argument, 0, 2004},
         {"bms-set-soc",       required_argument, 0, 2005},
+        {"bms-warn-thresh",   required_argument, 0, 2006},
+        {"bms-crit-thresh",   required_argument, 0, 2007},
         {"mqtt-host",         required_argument, 0, 'H'},
         {"mqtt-port",         required_argument, 0, 'P'},
         {"mqtt-topic",        required_argument, 0, 'T'},
@@ -474,8 +659,8 @@ int main(int argc, char *argv[])
         OLOG_INFO("  Shunt: %.3f Ω", r_shunt);
     }
 
-    // Set default battery config
-    memcpy(&battery_config, &battery_configs[7], sizeof(battery_config_t));
+    // Set default battery config: "4S2P_Samsung50E"
+    memcpy(&battery_config, &battery_configs[6], sizeof(battery_config_t));
     
     /* Parse command line arguments (can override auto-detected defaults) */
     int opt;
@@ -601,6 +786,20 @@ int main(int argc, char *argv[])
                     return EXIT_FAILURE;
                 }
                 break;
+            case 2006: // --bms-warn-thresh
+                cell_warning_threshold_mv = atoi(optarg);
+                if (cell_warning_threshold_mv <= 0) {
+                    OLOG_ERROR("Error: Invalid cell warning threshold");
+                    return EXIT_FAILURE;
+                }
+                break;
+            case 2007: // --bms-crit-thresh
+                cell_critical_threshold_mv = atoi(optarg);
+                if (cell_critical_threshold_mv <= 0) {
+                    OLOG_ERROR("Error: Invalid cell critical threshold");
+                    return EXIT_FAILURE;
+                }
+                break;
             case 'm': // --monitor
                 if (strcmp(optarg, "ina238") == 0) {
                     power_monitor = POWER_MONITOR_INA238;
@@ -692,6 +891,19 @@ int main(int argc, char *argv[])
             OLOG_ERROR("  - INA3221: Check if driver is loaded: ls /sys/bus/i2c/drivers/ina3221/");
             OLOG_ERROR("  - INA238: Check I2C bus %s and address 0x%02X", i2c_bus, i2c_addr);
             return EXIT_FAILURE;
+        }
+    }
+
+    /* Auto-detect Daly BMS if not explicitly enabled */
+    if (!bms_enable) {
+        char detected_port[64];
+        int detected_baud;
+
+        if (daly_bms_auto_detect(detected_port, &detected_baud)) {
+            OLOG_INFO("Auto-detected Daly BMS on %s at %d baud", detected_port, detected_baud);
+            bms_enable = true;
+            bms_port = strdup(detected_port);  /* Use detected port */
+            bms_baud = detected_baud;          /* Use detected baud rate */
         }
     }
 
@@ -804,6 +1016,9 @@ int main(int argc, char *argv[])
     }
     
     static time_t last_bms_poll = 0;
+    static daly_pack_health_t bms_health = {0};
+    static daly_fault_summary_t bms_faults = {0};
+    static bool bms_health_valid = false;
 
     /* Main monitoring loop */
     while (g_running) {
@@ -839,12 +1054,35 @@ int main(int argc, char *argv[])
             time_t now = time(NULL);
             if (now - last_bms_poll >= (bms_interval_ms / 1000)) {
                 if (daly_bms_poll(&daly_dev) == 0) {
+                    /* Free previous health data if any */
+                    if (bms_health_valid && bms_health.cells) {
+                        daly_bms_free_health(&bms_health);
+                    }
+
+                    /* Analyze battery health */
+                    daly_bms_analyze_health(&daly_dev, &bms_health, cell_warning_threshold_mv, cell_critical_threshold_mv);
+
+                    /* Categorize faults */
+                    daly_bms_categorize_faults(&daly_dev, &bms_faults);
+
+                    bms_health_valid = true;
+
                     /* Publish BMS data to MQTT */
-                    mqtt_publish_daly_bms_data(&daly_dev);
+                    mqtt_publish_daly_bms_data(&daly_dev, &battery_config);
+                    mqtt_publish_daly_health_data(&daly_dev, &bms_health, &bms_faults);
+
                     last_bms_poll = now;
                 }
             }
         }
+
+        /* Now publish the unified data */
+        mqtt_publish_unified_battery(
+            (power_monitor == POWER_MONITOR_INA238 || power_monitor == POWER_MONITOR_BOTH) ? &measurements : NULL,
+            bms_enable ? &daly_dev : NULL,
+            &battery_config,
+            max_current
+        );
 
         /* Read CPU usage */
         system_metrics.cpu_usage = cpu_monitor_get_usage();
@@ -879,7 +1117,9 @@ int main(int argc, char *argv[])
             }
 
             /* Print Daly BMS data if enabled */
-            if (bms_enable) {
+            if (bms_enable && bms_health_valid) {
+                print_enhanced_daly_data(&daly_dev, &bms_health, &bms_faults);
+            } else if (bms_enable) {
                 print_daly_bms_data(&daly_dev);
             }
 
@@ -904,6 +1144,9 @@ int main(int argc, char *argv[])
     }
     if (power_monitor == POWER_MONITOR_INA3221 || power_monitor == POWER_MONITOR_BOTH) {
         ina3221_close(&ina3221_dev);
+    }
+    if (bms_enable && bms_health_valid && bms_health.cells) {
+        daly_bms_free_health(&bms_health);
     }
     if (bms_enable) {
         daly_bms_close(&daly_dev);

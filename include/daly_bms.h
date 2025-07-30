@@ -27,6 +27,8 @@
 #include <stdint.h>
 #include <time.h>
 
+#include "battery_model.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -67,6 +69,18 @@ extern "C" {
 #define DALY_STATE_DISCHARGE    1
 #define DALY_STATE_CHARGE       2
 #define DALY_STATE_IDLE         0
+
+/* Battery health status */
+#define DALY_HEALTH_NORMAL    0
+#define DALY_HEALTH_WARNING   1
+#define DALY_HEALTH_CRITICAL  2
+
+#define DALY_CELL_WARNING_THRESHOLD_MV  70    /* 70 mV deviation from average is a warning */
+#define DALY_CELL_CRITICAL_THRESHOLD_MV 120   /* 120 mV deviation from average is critical */
+
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
 
 /**
  * @brief Pack summary information
@@ -161,6 +175,53 @@ typedef struct {
 } daly_capacity_t;
 
 /**
+ * @brief Cell health information
+ */
+typedef struct {
+    int status;                  /**< Cell health status (NORMAL, WARNING, CRITICAL) */
+    float voltage;               /**< Cell voltage in Volts */
+    int cell_index;              /**< Cell index (1-based) */
+    bool balancing;              /**< Whether the cell is balancing */
+    char reason[64];             /**< Reason for WARNING/CRITICAL status */
+} daly_cell_health_t;
+
+/**
+ * @brief Enhanced battery health status
+ */
+typedef struct {
+    int overall_status;          /**< Overall health status (NORMAL, WARNING, CRITICAL) */
+    float vmax;                  /**< Maximum cell voltage */
+    float vmin;                  /**< Minimum cell voltage */
+    float vdelta;                /**< Voltage delta between max and min */
+    float vavg;                  /**< Average cell voltage */
+    daly_cell_health_t *cells;   /**< Array of cell health information */
+    int cell_count;              /**< Number of cells */
+    int problem_cell_count;      /**< Number of problem cells */
+    char status_reason[128];     /**< Reason for overall status */
+} daly_pack_health_t;
+
+/**
+ * @brief Fault severity categories
+ */
+typedef struct {
+    int critical_count;          /**< Number of critical faults */
+    int warning_count;           /**< Number of warning faults */
+    int info_count;              /**< Number of informational faults */
+    char critical_faults[DALY_MAX_FAULTS/2][64]; /**< Critical fault descriptions */
+    char warning_faults[DALY_MAX_FAULTS/2][64];  /**< Warning fault descriptions */
+    char info_faults[DALY_MAX_FAULTS/2][64];     /**< Informational fault descriptions */
+} daly_fault_summary_t;
+
+/**
+ * @brief Auto-detect Daly BMS on common serial ports
+ *
+ * @param detected_port Buffer to store detected port path (must be at least 64 bytes)
+ * @param detected_baud Pointer to store detected baud rate
+ * @return bool true if BMS detected, false if not
+ */
+bool daly_bms_auto_detect(char *detected_port, int *detected_baud);
+
+/**
  * @brief Initialize the Daly BMS device
  * 
  * @param dev Pointer to device structure
@@ -251,6 +312,59 @@ bool daly_bms_infer_load(float current_a, bool dsg_mos, float threshold);
  * @param dev Pointer to device structure
  */
 void daly_bms_print_data(const daly_device_t *dev);
+
+/**
+ * @brief Analyze cell health status
+ *
+ * @param dev Pointer to device structure
+ * @param health Pointer to health structure to fill
+ * @param warning_threshold_mv Threshold for WARNING status in mV
+ * @param critical_threshold_mv Threshold for CRITICAL status in mV
+ * @return int Overall health status
+ */
+int daly_bms_analyze_health(daly_device_t *dev, daly_pack_health_t *health,
+                           int warning_threshold_mv, int critical_threshold_mv);
+
+/**
+ * @brief Free resources allocated for pack health
+ *
+ * @param health Pointer to pack health structure
+ */
+void daly_bms_free_health(daly_pack_health_t *health);
+
+/**
+ * @brief Categorize BMS faults by severity
+ *
+ * @param dev Pointer to device structure
+ * @param summary Pointer to fault summary structure to fill
+ * @return int 0 on success, negative on error
+ */
+int daly_bms_categorize_faults(const daly_device_t *dev, daly_fault_summary_t *summary);
+
+/**
+ * @brief Get string representation of health status
+ *
+ * @param status Health status code
+ * @return const char* String representation
+ */
+const char *daly_bms_health_string(int status);
+
+/**
+ * @brief Calculate battery runtime based on BMS data
+ *
+ * @param dev Pointer to device structure
+ * @param batt_config Pointer to battery configuration (for capacity info)
+ * @return float Estimated runtime in minutes
+ */
+float daly_bms_estimate_runtime(const daly_device_t *dev, const battery_config_t *batt_config);
+
+/**
+ * @brief Check if cell balancing is active
+ *
+ * @param dev Pointer to device structure
+ * @return bool true if any cell is balancing
+ */
+bool daly_bms_is_balancing(const daly_device_t *dev);
 
 #ifdef __cplusplus
 }
