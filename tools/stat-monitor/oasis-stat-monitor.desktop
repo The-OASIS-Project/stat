@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=OASIS STAT Monitor
+Comment=Real-time telemetry display for OASIS STAT
+Exec=/path/to/stat_monitor.py
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;Monitor;
+Keywords=battery;power;monitoring;telemetry;mqtt;
+StartupNotify=true
