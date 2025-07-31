@@ -709,10 +709,6 @@ int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurement
     /* Apply smoothing (source_id 2 for unified) */
     float smoothed_time = smooth_battery_runtime(raw_time, current_used, SOURCE_UNIFIED);
 
-    /* Add debugging fields to help diagnose calculation issues */
-    json_object_object_add(root, "time_calc_current", json_object_new_double(current_used));
-    json_object_object_add(root, "time_raw_min", json_object_new_double(raw_time));
-
     /* Format time as HH:MM */
     int hours = (int)(smoothed_time / 60.0f);
     int minutes = (int)(smoothed_time - hours * 60.0f);
