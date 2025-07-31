@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #include "battery_model.h"
 #include "logging.h"
@@ -227,6 +228,73 @@ static float interpolate_soc(float cell_voltage,
 
     /* Should never reach here, but just in case */
     return 0.5f;
+}
+
+/**
+ * @brief Apply adaptive smoothing to battery runtime calculation
+ */
+float smooth_battery_runtime(float raw_time_min, float current_a, battery_source_t source_id)
+{
+    /* State variables for each source (0=INA238, 1=DalyBMS, 2=Unified) */
+    static float smoothed_times[SOURCE_MAX] = {0};
+    static float previous_currents[SOURCE_MAX] = {0};
+    static time_t last_significant_change[SOURCE_MAX] = {0};
+    static bool initialized[SOURCE_MAX] = {false};
+
+    /* Ensure valid source_id */
+    if (source_id < 0 || source_id >= SOURCE_MAX) {
+        source_id = 0;
+    }
+
+    /* Initialize on first call for this source */
+    if (!initialized[source_id]) {
+        smoothed_times[source_id] = raw_time_min;
+        previous_currents[source_id] = current_a;
+        last_significant_change[source_id] = time(NULL);
+        initialized[source_id] = true;
+        return raw_time_min;
+    }
+
+    /* Base smoothing factor */
+    float alpha_base = 0.1f;  /* 10% weight to new reading */
+    float alpha = alpha_base;
+
+    /* Calculate current change percentage (use fabs to handle negative currents) */
+    float prev_current = previous_currents[source_id];
+    float current_change_percent = 0.0f;
+
+    /* Avoid division by zero or near-zero */
+    if (fabs(prev_current) > 0.1f) {
+        current_change_percent = fabs(current_a - prev_current) / fabs(prev_current);
+    }
+
+    /* Get time since last significant change */
+    time_t now = time(NULL);
+    time_t time_since_change = now - last_significant_change[source_id];
+
+    /* Adapt smoothing factor based on change magnitude and time */
+    if (current_change_percent > 0.2f) {
+        /* Fast adaptation for significant changes (>20%) */
+        alpha = 0.5f;
+        last_significant_change[source_id] = now;
+    } else if (current_change_percent > 0.1f) {
+        /* Moderate adaptation for medium changes (>10%) */
+        alpha = 0.3f;
+        last_significant_change[source_id] = now;
+    } else if (time_since_change > 60) {
+        /* Gradual increase in adaptation if stable for over 60 seconds */
+        alpha = 0.2f;
+    }
+
+    /* Apply exponential moving average smoothing */
+    float smoothed_time = (alpha * raw_time_min) +
+                          ((1.0f - alpha) * smoothed_times[source_id]);
+
+    /* Update state variables */
+    smoothed_times[source_id] = smoothed_time;
+    previous_currents[source_id] = current_a;
+
+    return smoothed_time;
 }
 
 float battery_calculate_percentage(float voltage, const battery_config_t *battery)

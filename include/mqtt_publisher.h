@@ -26,6 +26,8 @@
 #define MQTT_PUBLISHER_H
 
 #include <stdbool.h>
+
+#include "daly_bms.h"
 #include "ina238.h"
 #include "ina3221.h"
 #include "battery_model.h"
@@ -64,6 +66,40 @@ int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
  * @return int 0 on success, negative on error
  */
 int mqtt_publish_ina3221_data(const ina3221_measurements_t *measurements);
+
+/**
+ * @brief Publish Daly BMS data to MQTT
+ *
+ * @param daly_dev Pointer to Daly BMS device
+ * @param battery Battery configuration for time estimation
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_daly_bms_data(const daly_device_t *daly_dev, const battery_config_t *battery);
+
+/**
+ * @brief Publish enhanced Daly BMS health data to MQTT
+ *
+ * @param daly_dev Pointer to Daly BMS device
+ * @param health Pointer to pack health structure
+ * @param fault_summary Pointer to fault summary structure
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_daly_health_data(const daly_device_t *daly_dev,
+                                 const daly_pack_health_t *health,
+                                 const daly_fault_summary_t *fault_summary);
+
+/**
+ * @brief Publish unified battery data combining multiple sources
+ *
+ * @param ina238_measurements INA238 measurements (can be NULL)
+ * @param daly_dev Daly BMS device (can be NULL)
+ * @param battery_config Battery configuration
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurements,
+                              const daly_device_t *daly_dev,
+                              const battery_config_t *battery_config,
+                              float max_current);
 
 /**
  * @brief Publish CPU monitoring data to MQTT

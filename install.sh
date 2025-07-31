@@ -26,6 +26,10 @@ fi
 echo "Setting up I2C permissions..."
 sudo usermod -a -G i2c oasis
 
+# Set up permissions for serial port access
+echo "Setting up serial port permissions..."
+sudo usermod -a -G dialout oasis
+
 # Create config directory
 echo "Setting up configuration directory..."
 sudo mkdir -p /etc/oasis

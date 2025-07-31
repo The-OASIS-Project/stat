@@ -37,6 +37,16 @@ extern "C" {
 #define BATTERY_NAME_MAX_LENGTH 32
 
 /**
+ * @brief Battery information sources. Currently used for smoothing the battery runtime.
+ */
+typedef enum {
+   SOURCE_INA238,
+   SOURCE_DALYBMS,
+   SOURCE_UNIFIED,
+   SOURCE_MAX
+} battery_source_t;
+
+/**
  * @brief Battery chemistry types
  */
 typedef enum {
@@ -76,6 +86,16 @@ typedef struct {
     const char *status;        /**< Battery status (NORMAL, WARNING, CRITICAL) */
     bool valid;                /**< Whether the battery state is valid */
 } battery_state_t;
+
+/**
+ * @brief Apply adaptive smoothing to battery runtime calculation
+ *
+ * @param raw_time_min Raw calculated time in minutes
+ * @param current_a Current in amps (used to detect significant changes)
+ * @param source_id Identifier for the data source (to track separate states)
+ * @return float Smoothed time in minutes
+ */
+float smooth_battery_runtime(float raw_time_min, float current_a, battery_source_t source_id);
 
 /**
  * @brief Initialize battery configuration with default values
