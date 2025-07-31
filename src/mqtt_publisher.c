@@ -662,28 +662,48 @@ int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurement
 
     /* Always prioritize Daly BMS for capacity */
     if (daly_valid) {
-        /* For consistent calculations, always use the BMS values when available */
-        float capacity_mah = daly_dev->data.mos.remain_capacity_mah;
-        float discharge_current = -daly_dev->data.pack.current_a; /* Convert to positive */
-
-        /* Ensure we have positive values to avoid division issues */
-        if (capacity_mah > 0.0f && discharge_current > 0.1f) {
-            raw_time = (capacity_mah / (discharge_current * 1000.0f)) * 60.0f;
-            current_used = discharge_current;
+        /* Check if charging */
+        if (daly_dev->data.pack.current_a > 0.1f) {
+            /* Charging - report a very large time */
+            raw_time = 9999.0f;
+            current_used = 0.1f; /* Avoid division by zero */
         } else {
-            /* Fallback to percentage-based for Daly */
-            capacity_mah = battery_config->capacity_mah * (daly_dev->data.pack.soc_pct / 100.0f);
-            raw_time = (capacity_mah / (discharge_current * 1000.0f)) * 60.0f;
-            current_used = discharge_current;
+            /* Discharging or idle */
+            float discharge_current = -daly_dev->data.pack.current_a; /* Convert to positive */
+
+            /* Only calculate if actually discharging */
+            if (discharge_current > 0.1f) {
+                float capacity_mah = daly_dev->data.mos.remain_capacity_mah;
+
+                /* Use remaining capacity if available, otherwise calculate from percentage */
+                if (capacity_mah > 0.0f) {
+                    raw_time = (capacity_mah / (discharge_current * 1000.0f)) * 60.0f;
+                } else {
+                    capacity_mah = battery_config->capacity_mah * (daly_dev->data.pack.soc_pct / 100.0f);
+                    raw_time = (capacity_mah / (discharge_current * 1000.0f)) * 60.0f;
+                }
+                current_used = discharge_current;
+            } else {
+                /* Idle - report a very large time */
+                raw_time = 9999.0f;
+                current_used = 0.1f;
+            }
         }
     } else if (ina238_valid && battery_config) {
-        /* Only use INA238 if no BMS is available */
+        /* Use INA238 if no BMS is available */
         float capacity_mah = battery_config->capacity_mah *
                           (battery_calculate_percentage(ina238_measurements->bus_voltage, battery_config) / 100.0f);
-        float discharge_current = ina238_measurements->current;
+        float current = ina238_measurements->current;
 
-        raw_time = (capacity_mah / (discharge_current * 1000.0f)) * 60.0f;
-        current_used = discharge_current;
+        /* Only calculate if current is significant */
+        if (current > 0.1f) {
+            raw_time = (capacity_mah / (current * 1000.0f)) * 60.0f;
+            current_used = current;
+        } else {
+            /* Very low current - report a very large time */
+            raw_time = 9999.0f;
+            current_used = 0.1f;
+        }
     }
 
     /* Apply smoothing (source_id 2 for unified) */

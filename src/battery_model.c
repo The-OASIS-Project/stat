@@ -294,9 +294,6 @@ float smooth_battery_runtime(float raw_time_min, float current_a, battery_source
     smoothed_times[source_id] = smoothed_time;
     previous_currents[source_id] = current_a;
 
-    OLOG_INFO("Battery runtime smoothing (source %d): raw=%.1f, smoothed=%.1f, alpha=%.2f, change=%.1f%%",
-             source_id, raw_time_min, smoothed_time, alpha, current_change_percent * 100.0f);
-
     return smoothed_time;
 }
 
