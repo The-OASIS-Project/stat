@@ -102,20 +102,16 @@ int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurement
                               float max_current);
 
 /**
- * @brief Publish CPU monitoring data to MQTT
+ * @brief Publish System monitoring data to MQTT
  *
  * @param cpu_usage CPU usage percentage (0-100)
- * @return int 0 on success, negative on error
- */
-int mqtt_publish_cpu_data(float cpu_usage);
-
-/**
- * @brief Publish memory monitoring data to MQTT
- *
  * @param memory_usage Memory usage percentage (0-100)
+ * @param system_temp System temperature (C)
  * @return int 0 on success, negative on error
  */
-int mqtt_publish_memory_data(float memory_usage);
+int mqtt_publish_system_monitoring_data(float cpu_usage,
+                                       float memory_usage,
+                                       float system_temp);
 
 /**
  * @brief Publish fan monitoring data to MQTT

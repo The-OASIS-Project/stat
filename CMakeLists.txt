@@ -41,6 +41,7 @@ set(SOURCES
    src/memory_monitor.c
    src/mqtt_publisher.c
    src/oasis-stat.c
+   src/system_temp_monitor.c
 )
 
 # Header files (for IDE support)

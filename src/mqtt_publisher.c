@@ -775,46 +775,14 @@ int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurement
 }
 
 /**
- * @brief Publish CPU monitoring data to MQTT
+ * @brief Publish System monitoring data to MQTT
  *
  * @param cpu_usage CPU usage percentage (0-100)
- * @return int 0 on success, negative on error
- */
-int mqtt_publish_cpu_data(float cpu_usage)
-{
-   if (!mqtt_initialized || !mosq) {
-      return -1;
-   }
-
-   /* Create JSON object */
-   struct json_object *root = json_object_new_object();
-
-   /* Add device type and measurements */
-   json_object_object_add(root, "device", json_object_new_string("CPU"));
-   json_object_object_add(root, "usage", json_object_new_double(cpu_usage));
-
-   /* Convert to JSON string */
-   const char *json_str = json_object_to_json_string(root);
-
-   /* Publish to MQTT */
-   int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
-   if (rc != MOSQ_ERR_SUCCESS) {
-      OLOG_ERROR("MQTT: Failed to publish CPU message: %s", mosquitto_strerror(rc));
-   }
-
-   /* Free JSON object */
-   json_object_put(root);
-
-   return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
-}
-
-/**
- * @brief Publish memory monitoring data to MQTT
- *
  * @param memory_usage Memory usage percentage (0-100)
+ * @param system_temp System temperature (C)
  * @return int 0 on success, negative on error
  */
-int mqtt_publish_memory_data(float memory_usage)
+int mqtt_publish_system_monitoring_data(float cpu_usage, float memory_usage, float system_temp)
 {
    if (!mqtt_initialized || !mosq) {
       return -1;
@@ -824,8 +792,10 @@ int mqtt_publish_memory_data(float memory_usage)
    struct json_object *root = json_object_new_object();
 
    /* Add device type and measurements */
-   json_object_object_add(root, "device", json_object_new_string("Memory"));
-   json_object_object_add(root, "usage", json_object_new_double(memory_usage));
+   json_object_object_add(root, "device", json_object_new_string("SystemMetrics"));
+   json_object_object_add(root, "cpu_usage", json_object_new_double(cpu_usage));
+   json_object_object_add(root, "memory_usage", json_object_new_double(memory_usage));
+   json_object_object_add(root, "system_temp", json_object_new_double(system_temp));
 
    /* Convert to JSON string */
    const char *json_str = json_object_to_json_string(root);
@@ -833,7 +803,7 @@ int mqtt_publish_memory_data(float memory_usage)
    /* Publish to MQTT */
    int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
    if (rc != MOSQ_ERR_SUCCESS) {
-      OLOG_ERROR("MQTT: Failed to publish memory message: %s", mosquitto_strerror(rc));
+      OLOG_ERROR("MQTT: Failed to publish System Monitoring message: %s", mosquitto_strerror(rc));
    }
 
    /* Free JSON object */

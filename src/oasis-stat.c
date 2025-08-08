@@ -49,6 +49,7 @@
 #include "logging.h"
 #include "memory_monitor.h"
 #include "mqtt_publisher.h"
+#include "system_temp_monitor.h"
 
 /* Application Configuration */
 #define DEFAULT_SAMPLING_INTERVAL_MS    1000
@@ -105,9 +106,11 @@ typedef enum {
 typedef struct {
     float cpu_usage;
     float memory_usage;
+    float system_temperature;
     int fan_rpm;
     int fan_load;
     bool fan_available;
+    bool system_temp_available;
 } system_metrics_t;
 
 /* Global Variables */
@@ -263,8 +266,16 @@ static void print_system_monitoring(const system_metrics_t *sys_metrics)
 {
    /* System section */
    printf("SYSTEM MONITORING\n");
-   printf("  CPU Usage:    %6.1f%%\n", sys_metrics->cpu_usage);
+   printf("  CPU Usage:   %6.1f%%\n", sys_metrics->cpu_usage);
+
+   if (sys_metrics->system_temp_available && sys_metrics->system_temperature >= 0) {
+      printf("  System Temp:  %6.1f°C\n", sys_metrics->system_temperature);
+   } else {
+      printf("  System Temp:  Not available\n");
+   }
+
    printf("  Memory Usage: %6.1f%%\n", sys_metrics->memory_usage);
+
    if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
       printf("  Fan Speed:    %6d RPM (%d%%)\n", sys_metrics->fan_rpm, sys_metrics->fan_load);
    } else {
@@ -1021,6 +1032,13 @@ int main(int argc, char *argv[])
         OLOG_WARNING("Memory monitoring initialization failed");
     }
 
+    if (system_temp_monitor_init() == 0) {
+        system_metrics.system_temp_available = true;
+        OLOG_INFO("System temperature monitoring initialized");
+    } else {
+        OLOG_WARNING("System temperature monitoring initialization failed");
+    }
+
     if (fan_monitor_init() == 0) {
         system_metrics.fan_available = true;
         OLOG_INFO("Fan monitoring initialized");
@@ -1107,11 +1125,17 @@ int main(int argc, char *argv[])
 
         /* Read CPU usage */
         system_metrics.cpu_usage = cpu_monitor_get_usage();
-        mqtt_publish_cpu_data(system_metrics.cpu_usage);
 
         /* Read memory usage */
         system_metrics.memory_usage = memory_monitor_get_usage();
-        mqtt_publish_memory_data(system_metrics.memory_usage);
+
+        /* Read system temperature */
+        system_metrics.system_temperature = system_temp_monitor_get_temp();
+
+        /* Publish cpu, memory, and system temperature to mqtt */
+        mqtt_publish_system_monitoring_data(system_metrics.cpu_usage,
+                                           system_metrics.memory_usage,
+                                           system_metrics.system_temperature);
 
         /* Read fan metrics */
         if (system_metrics.fan_available) {
@@ -1158,6 +1182,7 @@ int main(int argc, char *argv[])
     OLOG_INFO("[STAT] OFFLINE - Telemetry collection stopped");
     cpu_monitor_cleanup();
     memory_monitor_cleanup();
+    system_temp_monitor_cleanup();
     fan_monitor_cleanup();
     mqtt_cleanup();
     if (power_monitor == POWER_MONITOR_INA238 || power_monitor == POWER_MONITOR_BOTH) {
