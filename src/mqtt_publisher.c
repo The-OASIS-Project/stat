@@ -305,7 +305,7 @@ int mqtt_publish_daly_bms_data(const daly_device_t *daly_dev, const battery_conf
    /* Add derived state information */
    int state = daly_bms_infer_state(data->pack.current_a, data->mos.charge_mos,
                                    data->mos.discharge_mos, DALY_CURRENT_DEADBAND);
-   json_object_object_add(root, "state", json_object_new_string(
+   json_object_object_add(root, "charging_state", json_object_new_string(
       state == DALY_STATE_CHARGE ? "charging" :
       state == DALY_STATE_DISCHARGE ? "discharging" : "idle"));
 
@@ -558,22 +558,43 @@ int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurement
     }
     json_object_object_add(root, "temperature", json_object_new_double(temperature));
 
+    /* Add charging state if Daly BMS is available */
+    const char *state_str;
+    if (daly_valid) {
+        int state = daly_bms_infer_state(daly_dev->data.pack.current_a,
+                                         daly_dev->data.mos.charge_mos,
+                                         daly_dev->data.mos.discharge_mos,
+                                         DALY_CURRENT_DEADBAND);
+
+        state_str = state == DALY_STATE_CHARGE ? "charging" :
+                   state == DALY_STATE_DISCHARGE ? "discharging" : "idle";
+    } else {
+        /* For other setups, we cannot detect charging, so we'll assume. */
+        state_str = "discharging";
+    }
+    json_object_object_add(root, "charging_state", json_object_new_string(state_str));
+
     /* Battery status based on combined data */
     const char *status = "NORMAL";
     char status_reason[128] = "";
 
-    /* Improved BMS status checking with detailed fault reporting */
-    if (daly_valid && daly_dev->data.fault_count > 0) {
-        /* Create fault arrays by severity */
-        struct json_object *critical_faults = json_object_new_array();
-        struct json_object *warning_faults = json_object_new_array();
-        struct json_object *info_faults = json_object_new_array();
+    /* Always initialize fault counts to zero */
+    json_object_object_add(root, "critical_fault_count", json_object_new_int(0));
+    json_object_object_add(root, "warning_fault_count", json_object_new_int(0));
+    json_object_object_add(root, "info_fault_count", json_object_new_int(0));
 
+    /* Add empty arrays for faults - they will be populated if any exist */
+    struct json_object *critical_faults = json_object_new_array();
+    struct json_object *warning_faults = json_object_new_array();
+    struct json_object *info_faults = json_object_new_array();
+
+    /* BMS status checking with detailed fault reporting */
+    if (daly_valid && daly_dev->data.fault_count > 0) {
         /* Categorize faults by severity */
         daly_fault_summary_t fault_summary = {0};
         daly_bms_categorize_faults(daly_dev, &fault_summary);
 
-        /* Add fault counts */
+        /* Update fault counts */
         json_object_object_add(root, "critical_fault_count",
                               json_object_new_int(fault_summary.critical_count));
         json_object_object_add(root, "warning_fault_count",
@@ -586,21 +607,18 @@ int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurement
             json_object_array_add(critical_faults,
                                 json_object_new_string(fault_summary.critical_faults[i]));
         }
-        json_object_object_add(root, "critical_faults", critical_faults);
 
         /* Add warning faults */
         for (int i = 0; i < fault_summary.warning_count; i++) {
             json_object_array_add(warning_faults,
                                 json_object_new_string(fault_summary.warning_faults[i]));
         }
-        json_object_object_add(root, "warning_faults", warning_faults);
 
         /* Add info faults */
         for (int i = 0; i < fault_summary.info_count; i++) {
             json_object_array_add(info_faults,
                                 json_object_new_string(fault_summary.info_faults[i]));
         }
-        json_object_object_add(root, "info_faults", info_faults);
 
         /* Update status based on fault severity */
         if (fault_summary.critical_count > 0) {
@@ -613,6 +631,11 @@ int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurement
                     "BMS reports %d warning(s)", fault_summary.warning_count);
         }
     }
+
+    /* Always add the fault arrays to ensure they're cleared when there are no faults */
+    json_object_object_add(root, "critical_faults", critical_faults);
+    json_object_object_add(root, "warning_faults", warning_faults);
+    json_object_object_add(root, "info_faults", info_faults);
 
     /* Check INA238 values */
     if (ina238_valid) {

@@ -277,7 +277,8 @@ static void print_system_monitoring(const system_metrics_t *sys_metrics)
    printf("  Memory Usage: %6.1f%%\n", sys_metrics->memory_usage);
 
    if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
-      printf("  Fan Speed:    %6d RPM (%d%%)\n", sys_metrics->fan_rpm, sys_metrics->fan_load);
+      printf("  Fan Speed:    %6d RPM (%d%%) (PWM: %d)\n",
+            sys_metrics->fan_rpm, sys_metrics->fan_load, fan_monitor_get_pwm());
    } else {
       printf("  Fan Speed:    Not available\n");
    }

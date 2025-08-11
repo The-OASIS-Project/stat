@@ -31,28 +31,35 @@ extern "C" {
 
 /**
  * @brief Initialize the fan monitoring subsystem
- * 
+ *
  * @return int 0 on success, negative on error
  */
 int fan_monitor_init(void);
 
 /**
  * @brief Sets the maximum expected RPM value for the fan
- * 
+ *
  * @param max_rpm The maximum RPM value expected
  */
 void fan_monitor_set_max_rpm(int max_rpm);
 
 /**
  * @brief Gets the current fan RPM
- * 
+ *
  * @return int The current RPM value, or -1 if unavailable
  */
 int fan_monitor_get_rpm(void);
 
 /**
+ * @brief Gets the current fan PWM value
+ *
+ * @return int The current PWM value (0-255), or -1 if unavailable
+ */
+int fan_monitor_get_pwm(void);
+
+/**
  * @brief Gets the fan load as a percentage
- * 
+ *
  * @return int Percentage of fan's maximum RPM (0-100), or -1 if unavailable
  */
 int fan_monitor_get_load_percent(void);

@@ -251,8 +251,8 @@ class StatMonitor:
                ('Charge FET:', 'charge_fet', ''),
                ('Discharge FET:', 'discharge_fet', ''),
             ])
-         if 'state' in payload_data:
-            additional_labels.append(('State:', 'state', ''))
+         if 'charging_state' in payload_data:
+            additional_labels.append(('State:', 'charging_state', ''))
          if 'cycles' in payload_data:
             additional_labels.append(('Cycles:', 'cycles', ''))
          if 'remaining_capacity_mah' in payload_data:
@@ -293,6 +293,8 @@ class StatMonitor:
             ])
          if 'battery_nominal_voltage' in payload_data:
             additional_labels.append(('Nominal Voltage:', 'battery_nominal_voltage', 'V'))
+         if 'charging_state' in payload_data:
+            additional_labels.append(('State:', 'charging_state', ''))
       
       return base_labels + additional_labels
    
@@ -603,7 +605,7 @@ class StatMonitor:
             text = str(value) if value else '--'
          
          # Apply special styling for state
-         if key == 'state':
+         if key == 'charging_state':
             if text.lower() == 'charging':
                label.config(text=text, foreground='#44ff44')
             elif text.lower() == 'discharging':
