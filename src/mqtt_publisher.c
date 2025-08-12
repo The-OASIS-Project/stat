@@ -840,9 +840,10 @@ int mqtt_publish_system_monitoring_data(float cpu_usage, float memory_usage, flo
  *
  * @param rpm Fan speed in RPM
  * @param load_percent Fan load percentage (0-100)
+ * #param pwm Fan PWM value (0-255)
  * @return int 0 on success, negative on error
  */
-int mqtt_publish_fan_data(int rpm, int load_percent)
+int mqtt_publish_fan_data(int rpm, int load_percent, int pwm)
 {
    if (!mqtt_initialized || !mosq) {
       return -1;
@@ -860,6 +861,7 @@ int mqtt_publish_fan_data(int rpm, int load_percent)
    json_object_object_add(root, "device", json_object_new_string("Fan"));
    json_object_object_add(root, "rpm", json_object_new_int(rpm));
    json_object_object_add(root, "load", json_object_new_int(load_percent));
+   json_object_object_add(root, "pwm", json_object_new_int(pwm));
 
    /* Convert to JSON string */
    const char *json_str = json_object_to_json_string(root);

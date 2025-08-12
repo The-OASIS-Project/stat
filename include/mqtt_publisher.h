@@ -118,9 +118,10 @@ int mqtt_publish_system_monitoring_data(float cpu_usage,
  *
  * @param rpm Fan speed in RPM
  * @param load_percent Fan load percentage (0-100)
+ * #param pwm Fan PWM value (0-255)
  * @return int 0 on success, negative on error
  */
-int mqtt_publish_fan_data(int rpm, int load_percent);
+int mqtt_publish_fan_data(int rpm, int load_percent, int pwm);
 
 /**
  * @brief Clean up MQTT resources

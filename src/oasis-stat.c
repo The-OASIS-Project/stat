@@ -109,6 +109,7 @@ typedef struct {
     float system_temperature;
     int fan_rpm;
     int fan_load;
+    int fan_pwm;
     bool fan_available;
     bool system_temp_available;
 } system_metrics_t;
@@ -278,7 +279,7 @@ static void print_system_monitoring(const system_metrics_t *sys_metrics)
 
    if (sys_metrics->fan_available && sys_metrics->fan_rpm >= 0) {
       printf("  Fan Speed:    %6d RPM (%d%%) (PWM: %d)\n",
-            sys_metrics->fan_rpm, sys_metrics->fan_load, fan_monitor_get_pwm());
+            sys_metrics->fan_rpm, sys_metrics->fan_load, sys_metrics->fan_pwm);
    } else {
       printf("  Fan Speed:    Not available\n");
    }
@@ -1142,8 +1143,11 @@ int main(int argc, char *argv[])
         if (system_metrics.fan_available) {
             system_metrics.fan_rpm = fan_monitor_get_rpm();
             system_metrics.fan_load = fan_monitor_get_load_percent();
+            system_metrics.fan_pwm = fan_monitor_get_pwm();
 
-            mqtt_publish_fan_data(system_metrics.fan_rpm, system_metrics.fan_load);
+            mqtt_publish_fan_data(system_metrics.fan_rpm,
+                                  system_metrics.fan_load,
+                                  system_metrics.fan_pwm);
         }
 
         if (!service_mode) {

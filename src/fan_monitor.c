@@ -433,7 +433,6 @@ int fan_monitor_get_load_percent(void)
    if (pwm >= 0) {
       /* Calculate percentage based on PWM value (0-255) */
       int percent = (pwm * 100) / FAN_MAX_PWM;
-      if (percent > 100) percent = 100; /* Cap at 100% */
 
       return percent;
    }
@@ -463,7 +462,7 @@ void fan_monitor_cleanup(void)
 
    fan_monitor_initialized = 0;
    fan_rpm_path[0] = '\0';
-   fan_pwm_path[0] = '\0';  /* Added clearing PWM path */
+   fan_pwm_path[0] = '\0';
    OLOG_INFO("Fan monitoring cleaned up");
 }
 
