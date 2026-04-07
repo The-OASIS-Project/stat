@@ -43,8 +43,6 @@ static char fan_rpm_path[PATH_MAX*2] = "";
 static char fan_pwm_path[PATH_MAX*4] = "";
 static int fan_monitor_initialized = 0;
 static int fan_max_rpm = FAN_DEFAULT_MAX_RPM;
-static FILE *rpm_file = NULL;
-static FILE *pwm_file = NULL;
 
 /**
  * @brief Finds the fan RPM file on Linux systems, with specific support for Jetson
@@ -289,41 +287,13 @@ static int find_fan_rpm_file(char *rpm_path, size_t path_size)
  */
 int fan_monitor_init(void)
 {
-   if (fan_monitor_initialized && rpm_file != NULL) {
+   if (fan_monitor_initialized) {
       return 0; /* Already initialized with valid file */
-   }
-
-   /* Close previous file if open */
-   if (rpm_file != NULL) {
-      fclose(rpm_file);
-      rpm_file = NULL;
-   }
-
-   if (pwm_file != NULL) {
-      fclose(pwm_file);
-      pwm_file = NULL;
    }
 
    if (find_fan_rpm_file(fan_rpm_path, sizeof(fan_rpm_path)) != 0) {
       OLOG_WARNING("Failed to find fan RPM file, fan monitoring disabled");
       return -1;
-   }
-
-   /* Open the file for persistent use */
-   rpm_file = fopen(fan_rpm_path, "r");
-   if (rpm_file == NULL) {
-      OLOG_ERROR("Failed to open fan RPM file: %s", fan_rpm_path);
-      return -1;
-   }
-
-   /* Open PWM file if available */
-   if (fan_pwm_path[0] != '\0') {
-      pwm_file = fopen(fan_pwm_path, "r");
-      if (pwm_file == NULL) {
-         OLOG_WARNING("Failed to open fan PWM file: %s, using default max RPM", fan_pwm_path);
-      } else {
-         OLOG_INFO("Fan PWM file opened: %s", fan_pwm_path);
-      }
    }
 
    OLOG_INFO("Fan monitoring initialized with RPM file: %s", fan_rpm_path);
@@ -351,38 +321,34 @@ void fan_monitor_set_max_rpm(int max_rpm)
  */
 int fan_monitor_get_rpm(void)
 {
+   FILE *rpm_file = NULL;
    int rpm = -1;
    
-   if (!fan_monitor_initialized || rpm_file == NULL) {
+   if (!fan_monitor_initialized) {
       if (fan_monitor_init() != 0) {
          return -1;
       }
    }
-   
-   /* Reset error indicators */
-   clearerr(rpm_file);
-   
-   /* Go to the beginning of the file */
-   rewind(rpm_file);
-   
-   /* Read the RPM value */
-   if (fscanf(rpm_file, "%d", &rpm) != 1) {
-      OLOG_WARNING("Failed to read fan RPM value, attempting to reinitialize");
-      
-      /* Try to reinitialize */
-      fan_monitor_initialized = 0;
-      fclose(rpm_file);
-      rpm_file = NULL;
-      
-      if (fan_monitor_init() == 0) {
-         /* Try again with new file */
-         rewind(rpm_file);
-         if (fscanf(rpm_file, "%d", &rpm) != 1) {
-            rpm = -1;
-         }
+
+   /* Open the file for persistent use */
+   if (fan_pwm_path[0] != '\0') {
+      rpm_file = fopen(fan_rpm_path, "r");
+      if (rpm_file == NULL) {
+         OLOG_ERROR("Failed to open fan RPM file: %s", fan_rpm_path);
+         return -1;
       }
    }
    
+   /* Read the RPM value */
+   if (fscanf(rpm_file, "%d", &rpm) != 1) {
+      OLOG_WARNING("Failed to read fan RPM value");
+   }
+
+   if (rpm_file != NULL) {
+      fclose(rpm_file);
+      rpm_file = NULL;
+   }
+
    return rpm;
 }
 
@@ -393,22 +359,30 @@ int fan_monitor_get_rpm(void)
  */
 int fan_monitor_get_pwm(void)
 {
+   FILE *pwm_file = NULL;
    int pwm = -1;
 
-   if (!fan_monitor_initialized || pwm_file == NULL) {
-      return -1; /* PWM file not available */
+   if (!fan_monitor_initialized) {
+      return -1;
    }
 
-   /* Reset error indicators */
-   clearerr(pwm_file);
-
-   /* Go to the beginning of the file */
-   rewind(pwm_file);
+   /* Open PWM file if available */
+   if (fan_pwm_path[0] != '\0') {
+      pwm_file = fopen(fan_pwm_path, "r");
+      if (pwm_file == NULL) {
+         OLOG_WARNING("Failed to open fan PWM file: %s, using default max RPM", fan_pwm_path);
+      }
+   }
 
    /* Read the PWM value */
    if (fscanf(pwm_file, "%d", &pwm) != 1) {
       OLOG_WARNING("Failed to read fan PWM value");
       return -1;
+   }
+
+   if (pwm_file != NULL) {
+      fclose(pwm_file);
+      pwm_file = NULL;
    }
 
    /* Ensure PWM value is in range 0-255 */
@@ -450,16 +424,6 @@ int fan_monitor_get_load_percent(void)
  */
 void fan_monitor_cleanup(void)
 {
-   if (rpm_file != NULL) {
-      fclose(rpm_file);
-      rpm_file = NULL;
-   }
-
-   if (pwm_file != NULL) {
-      fclose(pwm_file);
-      pwm_file = NULL;
-   }
-
    fan_monitor_initialized = 0;
    fan_rpm_path[0] = '\0';
    fan_pwm_path[0] = '\0';
