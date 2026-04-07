@@ -277,7 +277,29 @@ Press Ctrl+C to shutdown STAT
 
 ## MQTT Integration
 
-STAT publishes telemetry data to MQTT topics for consumption by other systems:
+STAT publishes telemetry data to MQTT topics for consumption by other OASIS components. It supports authentication (username/password) and TLS encryption.
+
+For the complete MQTT broker setup, certificate generation, and multi-component configuration, see the **[MQTT Setup Guide](https://github.com/The-OASIS-Project/dawn/blob/main/docs/MQTT_SETUP.md)** in the DAWN repository.
+
+### Quick MQTT Configuration
+
+**Service mode** (`config/stat.conf`):
+```bash
+MQTT_HOST=127.0.0.1
+MQTT_PORT=8883
+MQTT_TOPIC=stat
+MQTT_USERNAME=oasis
+MQTT_PASSWORD=your-password
+MQTT_TLS=true
+MQTT_CA_CERT=/etc/mosquitto/certs/ca.crt
+```
+
+**CLI mode:**
+```bash
+oasis-stat --mqtt-host 127.0.0.1 --mqtt-port 8883 \
+  --mqtt-username oasis --mqtt-password your-password \
+  --mqtt-ca-cert /etc/mosquitto/certs/ca.crt
+```
 
 ### Published Data Types
 
@@ -310,14 +332,20 @@ All data is published in JSON format with device type identifiers:
 ### STAT Monitor GUI
 
 For visual monitoring, STAT provides a Python-based GUI that:
-1. Connects to the MQTT broker
+1. Connects to the MQTT broker (supports auth + TLS)
 2. Displays real-time telemetry in a user-friendly interface
 3. Shows battery levels, cell voltages, system metrics, and more
 4. Auto-detects and displays multiple data sources
 
 Run the monitor with:
 ```bash
+# With auth + TLS
 cd tools/stat-monitor
+./stat_monitor.py --host 127.0.0.1 --port 8883 \
+  --username oasis --password your-password \
+  --ca-cert /etc/mosquitto/certs/ca.crt
+
+# Without auth (localhost only)
 ./stat_monitor.py
 ```
 

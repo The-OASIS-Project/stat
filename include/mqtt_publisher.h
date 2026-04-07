@@ -38,14 +38,25 @@
 #define MQTT_DEFAULT_TOPIC   "stat"
 
 /**
+ * @brief MQTT security configuration (optional auth + TLS)
+ */
+typedef struct {
+   const char *username;    /* MQTT username (NULL = no auth) */
+   const char *password;    /* MQTT password (NULL = no password) */
+   int tls;                 /* Enable TLS (0 = off, 1 = on) */
+   const char *tls_ca_cert; /* Path to CA certificate (NULL = system default) */
+} mqtt_security_t;
+
+/**
  * @brief Initialize MQTT connection
- * 
+ *
  * @param host MQTT broker hostname or IP
  * @param port MQTT broker port
  * @param topic MQTT topic for publishing
+ * @param security Security configuration (NULL = no auth/TLS)
  * @return int 0 on success, negative on error
  */
-int mqtt_init(const char *host, int port, const char *topic);
+int mqtt_init(const char *host, int port, const char *topic, const mqtt_security_t *security);
 
 /**
  * @brief Publish battery monitoring data to MQTT

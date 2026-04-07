@@ -209,6 +209,10 @@ static void print_usage(const char *prog_name)
     printf("  -H, --mqtt-host HOST   MQTT broker hostname (default: %s)\n", MQTT_DEFAULT_HOST);
     printf("  -P, --mqtt-port PORT   MQTT broker port (default: %d)\n", MQTT_DEFAULT_PORT);
     printf("  -T, --mqtt-topic TOPIC MQTT topic to publish to (default: %s)\n", MQTT_DEFAULT_TOPIC);
+    printf("      --mqtt-username USER  MQTT username (or env MQTT_USERNAME)\n");
+    printf("      --mqtt-password PASS  MQTT password (or env MQTT_PASSWORD)\n");
+    printf("      --mqtt-tls            Enable MQTT TLS encryption\n");
+    printf("      --mqtt-ca-cert PATH   Path to CA certificate (implies --mqtt-tls)\n");
     printf("\nDaly BMS Options:\n");
     printf("      --bms-enable         Enable Daly BMS monitoring\n");
     printf("      --bms-port PORT      Serial port for BMS (default: /dev/ttyTHS1)\n");
@@ -636,6 +640,10 @@ int main(int argc, char *argv[])
     char mqtt_host[128] = MQTT_DEFAULT_HOST;
     int mqtt_port = MQTT_DEFAULT_PORT;
     char mqtt_topic[64] = MQTT_DEFAULT_TOPIC;
+    char mqtt_username[128] = "";
+    char mqtt_password[128] = "";
+    int mqtt_tls = 0;
+    char mqtt_tls_ca_cert[256] = "";
 
     snprintf(bms_port, sizeof(bms_port), "%s", "/dev/ttyTHS1");
 
@@ -668,6 +676,10 @@ int main(int argc, char *argv[])
         {"mqtt-host",         required_argument, 0, 'H'},
         {"mqtt-port",         required_argument, 0, 'P'},
         {"mqtt-topic",        required_argument, 0, 'T'},
+        {"mqtt-username",     required_argument, 0, 3000},
+        {"mqtt-password",     required_argument, 0, 3001},
+        {"mqtt-tls",          no_argument,       0, 3002},
+        {"mqtt-ca-cert",      required_argument, 0, 3003},
         {"service",           no_argument,       0, 'e'},
         {"help",              no_argument,       0, 'h'},
         {"version",           no_argument,       0, 'v'},
@@ -863,6 +875,22 @@ int main(int argc, char *argv[])
                 strncpy(mqtt_topic, optarg, sizeof(mqtt_topic) - 1);
                 mqtt_topic[sizeof(mqtt_topic) - 1] = '\0';
                 break;
+            case 3000:  // mqtt-username
+                strncpy(mqtt_username, optarg, sizeof(mqtt_username) - 1);
+                mqtt_username[sizeof(mqtt_username) - 1] = '\0';
+                break;
+            case 3001:  // mqtt-password
+                strncpy(mqtt_password, optarg, sizeof(mqtt_password) - 1);
+                mqtt_password[sizeof(mqtt_password) - 1] = '\0';
+                break;
+            case 3002:  // mqtt-tls
+                mqtt_tls = 1;
+                break;
+            case 3003:  // mqtt-ca-cert
+                strncpy(mqtt_tls_ca_cert, optarg, sizeof(mqtt_tls_ca_cert) - 1);
+                mqtt_tls_ca_cert[sizeof(mqtt_tls_ca_cert) - 1] = '\0';
+                mqtt_tls = 1;  /* Implies TLS */
+                break;
             case 'e':  // service mode
                 service_mode = true;
                 break;
@@ -875,6 +903,36 @@ int main(int argc, char *argv[])
             default:
                 print_usage(argv[0]);
                 return EXIT_FAILURE;
+        }
+    }
+
+    /* Fall back to environment variables for MQTT security (for systemd service) */
+    if (mqtt_username[0] == '\0') {
+        const char *env = getenv("MQTT_USERNAME");
+        if (env) {
+            strncpy(mqtt_username, env, sizeof(mqtt_username) - 1);
+            mqtt_username[sizeof(mqtt_username) - 1] = '\0';
+        }
+    }
+    if (mqtt_password[0] == '\0') {
+        const char *env = getenv("MQTT_PASSWORD");
+        if (env) {
+            strncpy(mqtt_password, env, sizeof(mqtt_password) - 1);
+            mqtt_password[sizeof(mqtt_password) - 1] = '\0';
+        }
+    }
+    if (!mqtt_tls) {
+        const char *env = getenv("MQTT_TLS");
+        if (env && (strcmp(env, "1") == 0 || strcmp(env, "true") == 0)) {
+            mqtt_tls = 1;
+        }
+    }
+    if (mqtt_tls_ca_cert[0] == '\0') {
+        const char *env = getenv("MQTT_CA_CERT");
+        if (env) {
+            strncpy(mqtt_tls_ca_cert, env, sizeof(mqtt_tls_ca_cert) - 1);
+            mqtt_tls_ca_cert[sizeof(mqtt_tls_ca_cert) - 1] = '\0';
+            mqtt_tls = 1;
         }
     }
 
@@ -983,7 +1041,13 @@ int main(int argc, char *argv[])
     }
 
     /* Initialize MQTT */
-    if (mqtt_init(mqtt_host, mqtt_port, mqtt_topic) != 0) {
+    mqtt_security_t mqtt_sec = {
+        .username = mqtt_username[0] ? mqtt_username : NULL,
+        .password = mqtt_password[0] ? mqtt_password : NULL,
+        .tls = mqtt_tls,
+        .tls_ca_cert = mqtt_tls_ca_cert[0] ? mqtt_tls_ca_cert : NULL,
+    };
+    if (mqtt_init(mqtt_host, mqtt_port, mqtt_topic, &mqtt_sec) != 0) {
         OLOG_WARNING("Warning: Failed to initialize MQTT. Continuing without MQTT support.");
     } else {
         OLOG_INFO("MQTT publishing enabled. Topic: %s", mqtt_topic);

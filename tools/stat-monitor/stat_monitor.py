@@ -15,10 +15,15 @@ import argparse
 
 
 class StatMonitor:
-   def __init__(self, mqtt_host="localhost", mqtt_port=1883, mqtt_topic="stat"):
+   def __init__(self, mqtt_host="localhost", mqtt_port=1883, mqtt_topic="stat",
+                mqtt_username=None, mqtt_password=None, mqtt_tls=False, mqtt_ca_cert=None):
       self.mqtt_host = mqtt_host
       self.mqtt_port = mqtt_port
       self.mqtt_topic = mqtt_topic
+      self.mqtt_username = mqtt_username
+      self.mqtt_password = mqtt_password
+      self.mqtt_tls = mqtt_tls
+      self.mqtt_ca_cert = mqtt_ca_cert
       self.debug_mode = False  # Can be enabled externally
       
       # Data storage - separate different battery sources
@@ -398,7 +403,15 @@ class StatMonitor:
       self.memory_progress.pack(side=tk.LEFT, padx=10)
       self.system_labels['memory'] = ttk.Label(memory_frame, text="0%", style='Dark.TLabel')
       self.system_labels['memory'].pack(side=tk.LEFT, padx=5)
-      
+
+      # System temp
+      system_temp_frame = ttk.Frame(metrics_frame, style='Dark.TFrame')
+      system_temp_frame.pack(fill=tk.X, pady=5)
+
+      ttk.Label(system_temp_frame, text="System Temperature:", style='Dark.TLabel').pack(side=tk.LEFT)
+      self.system_labels['system_temp'] = ttk.Label(system_temp_frame, text="-- °C", style='Dark.TLabel')
+      self.system_labels['system_temp'].pack(side=tk.LEFT, padx=10)
+
       # Fan
       fan_frame = ttk.Frame(metrics_frame, style='Dark.TFrame')
       fan_frame.pack(fill=tk.X, pady=5)
@@ -444,10 +457,24 @@ class StatMonitor:
          self.mqtt_client.on_connect = self.on_mqtt_connect
          self.mqtt_client.on_message = self.on_mqtt_message
          self.mqtt_client.on_disconnect = self.on_mqtt_disconnect
-         
+
+         # Configure authentication
+         if self.mqtt_username:
+            self.mqtt_client.username_pw_set(self.mqtt_username, self.mqtt_password)
+            print(f"MQTT authentication configured for user: {self.mqtt_username}")
+
+         # Configure TLS
+         if self.mqtt_tls:
+            import ssl
+            self.mqtt_client.tls_set(
+               ca_certs=self.mqtt_ca_cert,
+               cert_reqs=ssl.CERT_REQUIRED if self.mqtt_ca_cert else ssl.CERT_NONE
+            )
+            print(f"MQTT TLS enabled (CA: {self.mqtt_ca_cert or 'system default'})")
+
          self.mqtt_client.connect(self.mqtt_host, self.mqtt_port, 60)
          self.mqtt_client.loop_start()
-         
+
       except Exception as e:
          print(f"MQTT connection failed: {e}")
          self.data['connection']['status'] = f'Error: {e}'
@@ -490,10 +517,10 @@ class StatMonitor:
                source_name = 'Battery Monitor'
          elif device_type == 'BatteryStatus':
             source_name = 'Unified Battery'
-         elif device_type == 'CPU':
-            self.data['system']['cpu_usage'] = payload.get('usage', 0)
-         elif device_type == 'Memory':
-            self.data['system']['memory_usage'] = payload.get('usage', 0)
+         elif device_type == 'SystemMetrics':
+            self.data['system']['cpu_usage'] = payload.get('cpu_usage', 0)
+            self.data['system']['memory_usage'] = payload.get('memory_usage', 0)
+            self.data['system']['system_temp'] = payload.get('system_temp', 0)
          elif device_type == 'Fan':
             self.data['system']['fan_rpm'] = payload.get('rpm', 0)
             self.data['system']['fan_load'] = payload.get('load', 0)
@@ -742,19 +769,26 @@ class StatMonitor:
       
       if self.debug_mode:
          print(f"[DEBUG] System data keys: {list(system_data.keys())}")
-      
+
       # CPU usage
       cpu_usage = system_data.get('cpu_usage', 0)
       if isinstance(cpu_usage, (int, float)):
          self.cpu_progress['value'] = cpu_usage
          self.system_labels['cpu'].config(text=f"{cpu_usage:.1f}%")
-      
+
       # Memory usage
       memory_usage = system_data.get('memory_usage', 0)
       if isinstance(memory_usage, (int, float)):
          self.memory_progress['value'] = memory_usage
          self.system_labels['memory'].config(text=f"{memory_usage:.1f}%")
-      
+
+      # System temp
+      system_temp = system_data.get('system_temp', 0)
+      if isinstance(system_temp, (int, float)):
+          self.system_labels['system_temp'].config(text=f"{system_temp:.1f} °C")
+      else:
+         self.system_labels['system_temp'].config(text="-- °C")
+
       # Fan data
       fan_rpm = system_data.get('fan_rpm', 0)
       fan_load = system_data.get('fan_load', 0)
@@ -816,18 +850,28 @@ def main():
    parser.add_argument('--host', default='localhost', help='MQTT broker host')
    parser.add_argument('--port', type=int, default=1883, help='MQTT broker port')
    parser.add_argument('--topic', default='stat', help='MQTT topic to subscribe to')
+   parser.add_argument('--username', default=None, help='MQTT username')
+   parser.add_argument('--password', default=None, help='MQTT password')
+   parser.add_argument('--tls', action='store_true', help='Enable MQTT TLS encryption')
+   parser.add_argument('--ca-cert', default=None, help='Path to CA certificate (implies --tls)')
    parser.add_argument('--debug', action='store_true', help='Enable debug output for MQTT messages')
-   
+
    args = parser.parse_args()
-   
+
+   # --ca-cert implies --tls
+   if args.ca_cert:
+      args.tls = True
+
    print(f"Starting OASIS STAT Monitor...")
    print(f"Connecting to MQTT broker: {args.host}:{args.port}")
    print(f"Subscribing to topic: {args.topic}")
    if args.debug:
       print("Debug mode enabled - MQTT messages will be logged")
-   
+
    try:
-      monitor = StatMonitor(args.host, args.port, args.topic)
+      monitor = StatMonitor(args.host, args.port, args.topic,
+                            mqtt_username=args.username, mqtt_password=args.password,
+                            mqtt_tls=args.tls, mqtt_ca_cert=args.ca_cert)
       # Enable debug mode if requested
       if args.debug:
          monitor.debug_mode = True

@@ -69,7 +69,7 @@ void on_disconnect(struct mosquitto *mosq, void *obj, int reason_code)
    }
 }
 
-int mqtt_init(const char *host, int port, const char *topic)
+int mqtt_init(const char *host, int port, const char *topic, const mqtt_security_t *security)
 {
    int rc;
 
@@ -90,6 +90,40 @@ int mqtt_init(const char *host, int port, const char *topic)
    /* Set callbacks */
    mosquitto_connect_callback_set(mosq, on_connect);
    mosquitto_disconnect_callback_set(mosq, on_disconnect);
+
+   /* Set reconnect parameters (min delay, max delay, exponential backoff) */
+   mosquitto_reconnect_delay_set(mosq, 2, 30, true);
+
+   /* Configure authentication and TLS if provided */
+   if (security != NULL) {
+      /* Set MQTT authentication */
+      if (security->username != NULL && security->username[0] != '\0') {
+         rc = mosquitto_username_pw_set(mosq, security->username,
+                                        (security->password && security->password[0] != '\0')
+                                           ? security->password
+                                           : NULL);
+         if (rc != MOSQ_ERR_SUCCESS) {
+            OLOG_ERROR("MQTT: Failed to set credentials: %s", mosquitto_strerror(rc));
+         } else {
+            OLOG_INFO("MQTT: Authentication configured for user: %s", security->username);
+         }
+      }
+
+      /* Configure TLS */
+      if (security->tls) {
+         const char *ca = (security->tls_ca_cert && security->tls_ca_cert[0] != '\0')
+                             ? security->tls_ca_cert
+                             : NULL;
+         rc = mosquitto_tls_set(mosq, ca, NULL, NULL, NULL, NULL);
+         if (rc != MOSQ_ERR_SUCCESS) {
+            OLOG_ERROR("MQTT: TLS setup failed: %s", mosquitto_strerror(rc));
+            mosquitto_destroy(mosq);
+            mosq = NULL;
+            return -1;
+         }
+         OLOG_INFO("MQTT: TLS enabled (CA: %s)", ca ? ca : "system default");
+      }
+   }
 
    /* Connect to broker */
    OLOG_INFO("MQTT: Connecting to broker at %s:%d", host, port);
