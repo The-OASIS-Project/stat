@@ -1,7 +1,7 @@
 /**
  * @file fan_monitor.c
  * @brief Fan Monitoring Implementation
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -22,14 +22,15 @@
  * part of the project and are adopted by the project author(s).
  */
 
+#include "fan_monitor.h"
+
 #include <dirent.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <limits.h>
 
-#include "fan_monitor.h"
 #include "logging.h"
 
 /* Default max RPM value */
@@ -39,8 +40,8 @@
 #define FAN_MAX_PWM 255
 
 /* Static variables */
-static char fan_rpm_path[PATH_MAX*2] = "";
-static char fan_pwm_path[PATH_MAX*4] = "";
+static char fan_rpm_path[PATH_MAX * 2] = "";
+static char fan_pwm_path[PATH_MAX * 4] = "";
 static int fan_monitor_initialized = 0;
 static int fan_max_rpm = FAN_DEFAULT_MAX_RPM;
 
@@ -51,12 +52,11 @@ static int fan_max_rpm = FAN_DEFAULT_MAX_RPM;
  * @param path_size Size of the buffer
  * @return int 0 on success, -1 if not found
  */
-static int find_fan_rpm_file(char *rpm_path, size_t path_size)
-{
+static int find_fan_rpm_file(char *rpm_path, size_t path_size) {
    DIR *dir;
    struct dirent *entry;
    char path[PATH_MAX];
-   char test_path[PATH_MAX+11];
+   char test_path[PATH_MAX + 11];
    int found = 0;
 
    /* 1. Try the Jetson tachometer path first (most specific) */
@@ -78,8 +78,7 @@ static int find_fan_rpm_file(char *rpm_path, size_t path_size)
                         struct dirent *hwmon_entry;
                         while ((hwmon_entry = readdir(hwmon_dir)) != NULL) {
                            if (strstr(hwmon_entry->d_name, "hwmon")) {
-                              snprintf(rpm_path, path_size, "%s/%s/rpm",
-                                       path, hwmon_entry->d_name);
+                              snprintf(rpm_path, path_size, "%s/%s/rpm", path, hwmon_entry->d_name);
                               if (access(rpm_path, R_OK) == 0) {
                                  found = 1;
                                  OLOG_INFO("Found tachometer RPM file: %s", rpm_path);
@@ -91,7 +90,7 @@ static int find_fan_rpm_file(char *rpm_path, size_t path_size)
                                  /* Check common pwm-fan locations */
                                  for (int i = 0; i < 6; i++) {
                                     snprintf(fan_pwm_path, sizeof(fan_pwm_path),
-                                            "/sys/devices/platform/pwm-fan/hwmon/hwmon%d/pwm1", i);
+                                             "/sys/devices/platform/pwm-fan/hwmon/hwmon%d/pwm1", i);
                                     if (access(fan_pwm_path, R_OK) == 0) {
                                        OLOG_INFO("Found PWM file for Jetson: %s", fan_pwm_path);
                                        break;
@@ -104,24 +103,28 @@ static int find_fan_rpm_file(char *rpm_path, size_t path_size)
                            }
                         }
                         closedir(hwmon_dir);
-                        if (found) break;
+                        if (found)
+                           break;
                      }
                   }
                }
                closedir(sub_dir);
-               if (found) break;
+               if (found)
+                  break;
             }
          }
       }
       closedir(dir);
-      if (found) return 0;
+      if (found)
+         return 0;
    }
 
    /* 2. Try the hwmon class (generic approach) */
    dir = opendir("/sys/class/hwmon");
    if (dir) {
       while ((entry = readdir(dir)) != NULL) {
-         if (entry->d_name[0] == '.') continue;
+         if (entry->d_name[0] == '.')
+            continue;
 
          /* Check for direct rpm file */
          snprintf(test_path, sizeof(test_path), "/sys/class/hwmon/%s/rpm", entry->d_name);
@@ -147,8 +150,8 @@ static int find_fan_rpm_file(char *rpm_path, size_t path_size)
 
          /* Check for fan input files */
          for (int i = 1; i <= 5; i++) {
-            snprintf(test_path, sizeof(test_path), "/sys/class/hwmon/%s/fan%d_input",
-                     entry->d_name, i);
+            snprintf(test_path, sizeof(test_path), "/sys/class/hwmon/%s/fan%d_input", entry->d_name,
+                     i);
             if (access(test_path, R_OK) == 0) {
                strncpy(rpm_path, test_path, path_size);
                rpm_path[path_size - 1] = '\0';
@@ -236,15 +239,13 @@ static int find_fan_rpm_file(char *rpm_path, size_t path_size)
    }
 
    /* 3. Try direct paths for common locations (fallback) */
-   const char *common_paths[] = {
-      "/sys/devices/platform/pwm-fan/hwmon/hwmon0/rpm",
-      "/sys/devices/platform/pwm-fan/hwmon/hwmon1/rpm",
-      "/sys/devices/platform/pwm-fan/hwmon/hwmon2/rpm",
-      "/sys/devices/platform/pwm-fan/hwmon/hwmon3/rpm",
-      "/sys/devices/platform/pwm-fan/hwmon/hwmon4/rpm",
-      "/sys/devices/platform/pwm-fan/hwmon/hwmon5/rpm",
-      NULL
-   };
+   const char *common_paths[] = { "/sys/devices/platform/pwm-fan/hwmon/hwmon0/rpm",
+                                  "/sys/devices/platform/pwm-fan/hwmon/hwmon1/rpm",
+                                  "/sys/devices/platform/pwm-fan/hwmon/hwmon2/rpm",
+                                  "/sys/devices/platform/pwm-fan/hwmon/hwmon3/rpm",
+                                  "/sys/devices/platform/pwm-fan/hwmon/hwmon4/rpm",
+                                  "/sys/devices/platform/pwm-fan/hwmon/hwmon5/rpm",
+                                  NULL };
 
    for (int i = 0; common_paths[i] != NULL; i++) {
       if (access(common_paths[i], R_OK) == 0) {
@@ -282,11 +283,10 @@ static int find_fan_rpm_file(char *rpm_path, size_t path_size)
 
 /**
  * @brief Initialize the fan monitoring subsystem
- * 
+ *
  * @return int 0 on success, -1 on failure
  */
-int fan_monitor_init(void)
-{
+int fan_monitor_init(void) {
    if (fan_monitor_initialized) {
       return 0; /* Already initialized with valid file */
    }
@@ -303,11 +303,10 @@ int fan_monitor_init(void)
 
 /**
  * @brief Sets the maximum expected RPM value for the fan
- * 
+ *
  * @param max_rpm The maximum RPM value expected
  */
-void fan_monitor_set_max_rpm(int max_rpm)
-{
+void fan_monitor_set_max_rpm(int max_rpm) {
    if (max_rpm > 0) {
       fan_max_rpm = max_rpm;
       OLOG_INFO("Fan max RPM set to %d", fan_max_rpm);
@@ -316,14 +315,13 @@ void fan_monitor_set_max_rpm(int max_rpm)
 
 /**
  * @brief Gets the current fan RPM
- * 
+ *
  * @return int The current RPM value, or -1 if unavailable
  */
-int fan_monitor_get_rpm(void)
-{
+int fan_monitor_get_rpm(void) {
    FILE *rpm_file = NULL;
    int rpm = -1;
-   
+
    if (!fan_monitor_initialized) {
       if (fan_monitor_init() != 0) {
          return -1;
@@ -338,7 +336,7 @@ int fan_monitor_get_rpm(void)
          return -1;
       }
    }
-   
+
    /* Read the RPM value */
    if (fscanf(rpm_file, "%d", &rpm) != 1) {
       OLOG_WARNING("Failed to read fan RPM value");
@@ -357,8 +355,7 @@ int fan_monitor_get_rpm(void)
  *
  * @return int The current PWM value (0-255), or -1 if unavailable
  */
-int fan_monitor_get_pwm(void)
-{
+int fan_monitor_get_pwm(void) {
    FILE *pwm_file = NULL;
    int pwm = -1;
 
@@ -386,21 +383,23 @@ int fan_monitor_get_pwm(void)
    }
 
    /* Ensure PWM value is in range 0-255 */
-   if (pwm < 0) pwm = 0;
-   if (pwm > FAN_MAX_PWM) pwm = FAN_MAX_PWM;
+   if (pwm < 0)
+      pwm = 0;
+   if (pwm > FAN_MAX_PWM)
+      pwm = FAN_MAX_PWM;
 
    return pwm;
 }
 
 /**
  * @brief Gets the fan load as a percentage
- * 
+ *
  * @return int Percentage of fan's maximum RPM (0-100), or -1 if unavailable
  */
-int fan_monitor_get_load_percent(void)
-{
+int fan_monitor_get_load_percent(void) {
    int rpm = fan_monitor_get_rpm();
-   if (rpm < 0) return -1;
+   if (rpm < 0)
+      return -1;
 
    /* Try to use PWM value for percentage if available */
    int pwm = fan_monitor_get_pwm();
@@ -414,7 +413,8 @@ int fan_monitor_get_load_percent(void)
 
    /* Fall back to RPM-based percentage if PWM not available */
    int percent = (rpm * 100) / fan_max_rpm;
-   if (percent > 100) percent = 100; /* Cap at 100% */
+   if (percent > 100)
+      percent = 100; /* Cap at 100% */
 
    return percent;
 }
@@ -422,11 +422,9 @@ int fan_monitor_get_load_percent(void)
 /**
  * @brief Clean up fan monitoring resources
  */
-void fan_monitor_cleanup(void)
-{
+void fan_monitor_cleanup(void) {
    fan_monitor_initialized = 0;
    fan_rpm_path[0] = '\0';
    fan_pwm_path[0] = '\0';
    OLOG_INFO("Fan monitoring cleaned up");
 }
-

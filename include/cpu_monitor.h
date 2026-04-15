@@ -1,7 +1,7 @@
 /**
  * @file cpu_monitor.h
  * @brief CPU Monitoring Functions
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -31,14 +31,14 @@ extern "C" {
 
 /**
  * @brief Initialize CPU monitoring
- * 
+ *
  * @return int 0 on success, negative on error
  */
 int cpu_monitor_init(void);
 
 /**
  * @brief Get CPU utilization percentage
- * 
+ *
  * @return float CPU utilization percentage (0-100)
  */
 float cpu_monitor_get_usage(void);
@@ -53,4 +53,3 @@ void cpu_monitor_cleanup(void);
 #endif
 
 #endif /* CPU_MONITOR_H */
-

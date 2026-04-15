@@ -27,16 +27,16 @@
 
 #include <stdbool.h>
 
+#include "battery_model.h"
 #include "daly_bms.h"
 #include "ina238.h"
 #include "ina3221.h"
-#include "battery_model.h"
 
 /* MQTT Configuration */
-#define MQTT_DEFAULT_HOST    "localhost"
-#define MQTT_DEFAULT_PORT    1883
-#define MQTT_DEFAULT_TOPIC   "stat/telemetry"
-#define MQTT_STATUS_TOPIC    "stat/status"
+#define MQTT_DEFAULT_HOST "localhost"
+#define MQTT_DEFAULT_PORT 1883
+#define MQTT_DEFAULT_TOPIC "stat/telemetry"
+#define MQTT_STATUS_TOPIC "stat/status"
 
 /**
  * @brief MQTT security configuration (optional auth + TLS)
@@ -80,8 +80,8 @@ int mqtt_publish_status_offline(void);
  * @return int 0 on success, negative on error
  */
 int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
-                          float battery_percentage,
-                          const battery_config_t *battery);
+                              float battery_percentage,
+                              const battery_config_t *battery);
 
 /**
  * @brief Publish INA3221 multi-channel power data to MQTT
@@ -109,8 +109,8 @@ int mqtt_publish_daly_bms_data(const daly_device_t *daly_dev, const battery_conf
  * @return int 0 on success, negative on error
  */
 int mqtt_publish_daly_health_data(const daly_device_t *daly_dev,
-                                 const daly_pack_health_t *health,
-                                 const daly_fault_summary_t *fault_summary);
+                                  const daly_pack_health_t *health,
+                                  const daly_fault_summary_t *fault_summary);
 
 /**
  * @brief Publish unified battery data combining multiple sources
@@ -121,9 +121,9 @@ int mqtt_publish_daly_health_data(const daly_device_t *daly_dev,
  * @return int 0 on success, negative on error
  */
 int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurements,
-                              const daly_device_t *daly_dev,
-                              const battery_config_t *battery_config,
-                              float max_current);
+                                 const daly_device_t *daly_dev,
+                                 const battery_config_t *battery_config,
+                                 float max_current);
 
 /**
  * @brief Publish System monitoring data to MQTT
@@ -133,9 +133,7 @@ int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurement
  * @param system_temp System temperature (C)
  * @return int 0 on success, negative on error
  */
-int mqtt_publish_system_monitoring_data(float cpu_usage,
-                                       float memory_usage,
-                                       float system_temp);
+int mqtt_publish_system_monitoring_data(float cpu_usage, float memory_usage, float system_temp);
 
 /**
  * @brief Publish fan monitoring data to MQTT
@@ -153,4 +151,3 @@ int mqtt_publish_fan_data(int rpm, int load_percent, int pwm);
 void mqtt_cleanup(void);
 
 #endif /* MQTT_PUBLISHER_H */
-

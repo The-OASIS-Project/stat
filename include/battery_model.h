@@ -50,41 +50,41 @@ typedef enum {
  * @brief Battery chemistry types
  */
 typedef enum {
-    BATT_CHEMISTRY_LIION,     /**< Standard Lithium-Ion (e.g., 18650, 21700) */
-    BATT_CHEMISTRY_LIPO,      /**< Lithium Polymer */
-    BATT_CHEMISTRY_LIFEPO4,   /**< Lithium Iron Phosphate */
-    BATT_CHEMISTRY_NIMH,      /**< Nickel Metal Hydride */
-    BATT_CHEMISTRY_LEAD_ACID, /**< Lead Acid */
-    BATT_CHEMISTRY_UNKNOWN    /**< Unknown/Custom chemistry */
+   BATT_CHEMISTRY_LIION,     /**< Standard Lithium-Ion (e.g., 18650, 21700) */
+   BATT_CHEMISTRY_LIPO,      /**< Lithium Polymer */
+   BATT_CHEMISTRY_LIFEPO4,   /**< Lithium Iron Phosphate */
+   BATT_CHEMISTRY_NIMH,      /**< Nickel Metal Hydride */
+   BATT_CHEMISTRY_LEAD_ACID, /**< Lead Acid */
+   BATT_CHEMISTRY_UNKNOWN    /**< Unknown/Custom chemistry */
 } battery_chemistry_t;
 
 /**
  * @brief Battery configuration structure
  */
 typedef struct {
-    float min_voltage;         /**< Empty battery voltage */
-    float max_voltage;         /**< Full battery voltage */
-    float nominal_voltage;     /**< Nominal voltage */
-    float warning_percent;     /**< Warning threshold percentage */
-    float critical_percent;    /**< Critical threshold percentage */
-    float capacity_mah;        /**< Battery capacity in mAh */
-    int cells_series;          /**< Number of cells in series */
-    int cells_parallel;        /**< Number of cells in parallel (default 1) */
-    battery_chemistry_t chemistry; /**< Battery chemistry type */
-    char name[BATTERY_NAME_MAX_LENGTH]; /**< Battery type name */
+   float min_voltage;                  /**< Empty battery voltage */
+   float max_voltage;                  /**< Full battery voltage */
+   float nominal_voltage;              /**< Nominal voltage */
+   float warning_percent;              /**< Warning threshold percentage */
+   float critical_percent;             /**< Critical threshold percentage */
+   float capacity_mah;                 /**< Battery capacity in mAh */
+   int cells_series;                   /**< Number of cells in series */
+   int cells_parallel;                 /**< Number of cells in parallel (default 1) */
+   battery_chemistry_t chemistry;      /**< Battery chemistry type */
+   char name[BATTERY_NAME_MAX_LENGTH]; /**< Battery type name */
 } battery_config_t;
 
 /**
  * @brief Battery state structure
  */
 typedef struct {
-    float voltage;             /**< Current battery voltage */
-    float current;             /**< Current draw in Amps */
-    float temperature;         /**< Battery temperature (C) */
-    float percent_remaining;   /**< Battery percent remaining (0-100) */
-    float time_remaining_min;  /**< Estimated runtime remaining in minutes */
-    const char *status;        /**< Battery status (NORMAL, WARNING, CRITICAL) */
-    bool valid;                /**< Whether the battery state is valid */
+   float voltage;            /**< Current battery voltage */
+   float current;            /**< Current draw in Amps */
+   float temperature;        /**< Battery temperature (C) */
+   float percent_remaining;  /**< Battery percent remaining (0-100) */
+   float time_remaining_min; /**< Estimated runtime remaining in minutes */
+   const char *status;       /**< Battery status (NORMAL, WARNING, CRITICAL) */
+   bool valid;               /**< Whether the battery state is valid */
 } battery_state_t;
 
 /**
@@ -128,7 +128,7 @@ float battery_calculate_percentage(float voltage, const battery_config_t *batter
  * @return float Estimated runtime remaining in minutes
  */
 float battery_estimate_time_remaining(const battery_state_t *state,
-                                    const battery_config_t *battery);
+                                      const battery_config_t *battery);
 
 /**
  * @brief Get human-readable string for battery chemistry
@@ -136,7 +136,7 @@ float battery_estimate_time_remaining(const battery_state_t *state,
  * @param chemistry Battery chemistry enum value
  * @return const char* String representation
  */
-const char* battery_chemistry_to_string(battery_chemistry_t chemistry);
+const char *battery_chemistry_to_string(battery_chemistry_t chemistry);
 
 /**
  * @brief Parse battery chemistry string to enum
@@ -151,4 +151,3 @@ battery_chemistry_t battery_chemistry_from_string(const char *chemistry_str);
 #endif
 
 #endif /* BATTERY_MODEL_H */
-

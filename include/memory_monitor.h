@@ -1,7 +1,7 @@
 /**
  * @file memory_monitor.h
  * @brief Memory Monitoring Functions
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -31,14 +31,14 @@ extern "C" {
 
 /**
  * @brief Initialize memory monitoring
- * 
+ *
  * @return int 0 on success, negative on error
  */
 int memory_monitor_init(void);
 
 /**
  * @brief Get memory utilization percentage
- * 
+ *
  * @return float Memory utilization percentage (0-100)
  */
 float memory_monitor_get_usage(void);
@@ -53,4 +53,3 @@ void memory_monitor_cleanup(void);
 #endif
 
 #endif /* MEMORY_MONITOR_H */
-

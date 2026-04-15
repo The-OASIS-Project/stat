@@ -27,9 +27,9 @@
 
 // Log levels - same values as syslog
 typedef enum {
-    LOGLEVEL_INFO = LOG_INFO,
-    LOGLEVEL_WARNING = LOG_WARNING,
-    LOGLEVEL_ERROR = LOG_ERR,
+   LOGLEVEL_INFO = LOG_INFO,
+   LOGLEVEL_WARNING = LOG_WARNING,
+   LOGLEVEL_ERROR = LOG_ERR,
 } log_level_t;
 
 #ifdef __cplusplus
@@ -60,5 +60,4 @@ void close_logging(void);
 #define OLOG_WARNING(fmt, ...) log_message(LOGLEVEL_WARNING, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 #define OLOG_ERROR(fmt, ...) log_message(LOGLEVEL_ERROR, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 
-#endif // LOGGING_H
-
+#endif  // LOGGING_H

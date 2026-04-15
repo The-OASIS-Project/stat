@@ -1,7 +1,7 @@
 /**
  * @file fan_monitor.h
  * @brief Fan Monitoring Functions
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -74,4 +74,3 @@ void fan_monitor_cleanup(void);
 #endif
 
 #endif /* FAN_MONITOR_H */
-
