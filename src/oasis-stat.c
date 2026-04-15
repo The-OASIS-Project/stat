@@ -1051,6 +1051,7 @@ int main(int argc, char *argv[])
         OLOG_WARNING("Warning: Failed to initialize MQTT. Continuing without MQTT support.");
     } else {
         OLOG_INFO("MQTT publishing enabled. Topic: %s", mqtt_topic);
+        mqtt_publish_status_online();
     }
 
     /* Validate custom battery configuration */
@@ -1253,6 +1254,7 @@ int main(int argc, char *argv[])
     memory_monitor_cleanup();
     system_temp_monitor_cleanup();
     fan_monitor_cleanup();
+    mqtt_publish_status_offline();
     mqtt_cleanup();
     if (power_monitor == POWER_MONITOR_INA238 || power_monitor == POWER_MONITOR_BOTH) {
         ina238_close(&ina238_dev);

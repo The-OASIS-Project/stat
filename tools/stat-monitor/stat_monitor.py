@@ -15,7 +15,7 @@ import argparse
 
 
 class StatMonitor:
-   def __init__(self, mqtt_host="localhost", mqtt_port=1883, mqtt_topic="stat",
+   def __init__(self, mqtt_host="localhost", mqtt_port=1883, mqtt_topic="stat/telemetry",
                 mqtt_username=None, mqtt_password=None, mqtt_tls=False, mqtt_ca_cert=None):
       self.mqtt_host = mqtt_host
       self.mqtt_port = mqtt_port
@@ -498,33 +498,34 @@ class StatMonitor:
       """Handle incoming MQTT messages"""
       try:
          payload = json.loads(msg.payload.decode())
-         device_type = payload.get('device', '')
-         device_subtype = payload.get('type', '')
-         
+         # OCP v1.4: route on 'type' field (fallback to 'device' for legacy)
+         msg_type = payload.get('type', '') or payload.get('device', '')
+         sensor = payload.get('sensor', '')
+
          if self.debug_mode:
-            print(f"[DEBUG] Received: device='{device_type}', type='{device_subtype}', size={len(msg.payload)} bytes")
-         
+            print(f"[DEBUG] Received: type='{msg_type}', sensor='{sensor}', size={len(msg.payload)} bytes")
+
          self.data['connection']['last_update'] = datetime.now()
-         
+
          # Determine source name for battery data
          source_name = None
-         if device_type == 'Battery':
-            if device_subtype == 'INA238':
+         if msg_type == 'Battery':
+            if sensor == 'INA238':
                source_name = 'INA238 Power Monitor'
-            elif device_subtype == 'DalyBMS':
+            elif sensor == 'DalyBMS':
                source_name = 'Daly BMS'
             else:
                source_name = 'Battery Monitor'
-         elif device_type == 'BatteryStatus':
+         elif msg_type == 'BatteryStatus':
             source_name = 'Unified Battery'
-         elif device_type == 'SystemMetrics':
+         elif msg_type == 'SystemMetrics':
             self.data['system']['cpu_usage'] = payload.get('cpu_usage', 0)
             self.data['system']['memory_usage'] = payload.get('memory_usage', 0)
             self.data['system']['system_temp'] = payload.get('system_temp', 0)
-         elif device_type == 'Fan':
+         elif msg_type == 'Fan':
             self.data['system']['fan_rpm'] = payload.get('rpm', 0)
             self.data['system']['fan_load'] = payload.get('load', 0)
-         elif device_type == 'SystemPower':
+         elif msg_type == 'SystemPower':
             # INA3221 multi-channel data
             self.data['system']['power_channels'] = payload.get('channels', [])
             if self.debug_mode:
@@ -849,7 +850,7 @@ def main():
    parser = argparse.ArgumentParser(description='OASIS STAT Monitor')
    parser.add_argument('--host', default='localhost', help='MQTT broker host')
    parser.add_argument('--port', type=int, default=1883, help='MQTT broker port')
-   parser.add_argument('--topic', default='stat', help='MQTT topic to subscribe to')
+   parser.add_argument('--topic', default='stat/telemetry', help='MQTT topic to subscribe to')
    parser.add_argument('--username', default=None, help='MQTT username')
    parser.add_argument('--password', default=None, help='MQTT password')
    parser.add_argument('--tls', action='store_true', help='Enable MQTT TLS encryption')

@@ -35,7 +35,8 @@
 /* MQTT Configuration */
 #define MQTT_DEFAULT_HOST    "localhost"
 #define MQTT_DEFAULT_PORT    1883
-#define MQTT_DEFAULT_TOPIC   "stat"
+#define MQTT_DEFAULT_TOPIC   "stat/telemetry"
+#define MQTT_STATUS_TOPIC    "stat/status"
 
 /**
  * @brief MQTT security configuration (optional auth + TLS)
@@ -57,6 +58,18 @@ typedef struct {
  * @return int 0 on success, negative on error
  */
 int mqtt_init(const char *host, int port, const char *topic, const mqtt_security_t *security);
+
+/**
+ * @brief Publish online status message after MQTT connect
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_status_online(void);
+
+/**
+ * @brief Publish offline status message before graceful shutdown
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_status_offline(void);
 
 /**
  * @brief Publish battery monitoring data to MQTT

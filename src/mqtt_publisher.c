@@ -23,6 +23,7 @@
  */
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,27 @@ struct battery_config_t;
 static struct mosquitto *mosq = NULL;
 static bool mqtt_initialized = false;
 static char current_topic[64] = MQTT_DEFAULT_TOPIC;
+
+/**
+ * @brief Get current timestamp in milliseconds (OCP v1.4).
+ */
+static int64_t get_timestamp_ms(void) {
+   struct timespec ts;
+   clock_gettime(CLOCK_REALTIME, &ts);
+   return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/**
+ * @brief Add OCP v1.4 telemetry envelope fields to a JSON object.
+ *
+ * Adds device:"stat", msg_type:"telemetry", type:<sub_type>, timestamp.
+ */
+static void ocp_add_telemetry_envelope(struct json_object *root, const char *sub_type) {
+   json_object_object_add(root, "device", json_object_new_string("stat"));
+   json_object_object_add(root, "msg_type", json_object_new_string("telemetry"));
+   json_object_object_add(root, "type", json_object_new_string(sub_type));
+   json_object_object_add(root, "timestamp", json_object_new_int64(get_timestamp_ms()));
+}
 
 /* MQTT callback functions */
 void on_connect(struct mosquitto *mosq, void *obj, int reason_code)
@@ -125,6 +147,21 @@ int mqtt_init(const char *host, int port, const char *topic, const mqtt_security
       }
    }
 
+   /* Set Last Will and Testament for offline detection */
+   struct json_object *lwt_obj = json_object_new_object();
+   if (lwt_obj) {
+      json_object_object_add(lwt_obj, "device", json_object_new_string("stat"));
+      json_object_object_add(lwt_obj, "msg_type", json_object_new_string("status"));
+      json_object_object_add(lwt_obj, "status", json_object_new_string("offline"));
+      json_object_object_add(lwt_obj, "timestamp", json_object_new_int64(0));
+      const char *lwt_str = json_object_to_json_string(lwt_obj);
+      rc = mosquitto_will_set(mosq, MQTT_STATUS_TOPIC, (int)strlen(lwt_str), lwt_str, 1, true);
+      if (rc != MOSQ_ERR_SUCCESS) {
+         OLOG_ERROR("MQTT: Failed to set LWT: %s", mosquitto_strerror(rc));
+      }
+      json_object_put(lwt_obj);
+   }
+
    /* Connect to broker */
    OLOG_INFO("MQTT: Connecting to broker at %s:%d", host, port);
    rc = mosquitto_connect(mosq, host, port, 60);
@@ -149,6 +186,56 @@ int mqtt_init(const char *host, int port, const char *topic, const mqtt_security
    return 0;
 }
 
+int mqtt_publish_status_online(void) {
+   if (!mqtt_initialized || !mosq) {
+      return -1;
+   }
+
+   struct json_object *root = json_object_new_object();
+   if (!root) {
+      return -1;
+   }
+   json_object_object_add(root, "device", json_object_new_string("stat"));
+   json_object_object_add(root, "msg_type", json_object_new_string("status"));
+   json_object_object_add(root, "status", json_object_new_string("online"));
+   json_object_object_add(root, "timestamp", json_object_new_int64(get_timestamp_ms()));
+
+   const char *json_str = json_object_to_json_string(root);
+   int rc =
+      mosquitto_publish(mosq, NULL, MQTT_STATUS_TOPIC, (int)strlen(json_str), json_str, 1, true);
+   if (rc != MOSQ_ERR_SUCCESS) {
+      OLOG_ERROR("MQTT: Failed to publish online status: %s", mosquitto_strerror(rc));
+   }
+
+   json_object_put(root);
+   return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
+}
+
+int mqtt_publish_status_offline(void) {
+   if (!mqtt_initialized || !mosq) {
+      return -1;
+   }
+
+   struct json_object *root = json_object_new_object();
+   if (!root) {
+      return -1;
+   }
+   json_object_object_add(root, "device", json_object_new_string("stat"));
+   json_object_object_add(root, "msg_type", json_object_new_string("status"));
+   json_object_object_add(root, "status", json_object_new_string("offline"));
+   json_object_object_add(root, "timestamp", json_object_new_int64(get_timestamp_ms()));
+
+   const char *json_str = json_object_to_json_string(root);
+   int rc =
+      mosquitto_publish(mosq, NULL, MQTT_STATUS_TOPIC, (int)strlen(json_str), json_str, 1, true);
+   if (rc != MOSQ_ERR_SUCCESS) {
+      OLOG_ERROR("MQTT: Failed to publish offline status: %s", mosquitto_strerror(rc));
+   }
+
+   json_object_put(root);
+   return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
+}
+
 int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
                           float battery_percentage,
                           const battery_config_t *battery)
@@ -170,9 +257,9 @@ int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
     /* Create JSON object */
     struct json_object *root = json_object_new_object();
 
-    /* Add device type and measurements */
-    json_object_object_add(root, "device", json_object_new_string("Battery"));
-    json_object_object_add(root, "type", json_object_new_string("INA238"));
+    /* OCP v1.4 envelope */
+    ocp_add_telemetry_envelope(root, "Battery");
+    json_object_object_add(root, "sensor", json_object_new_string("INA238"));
     json_object_object_add(root, "voltage", json_object_new_double(measurements->bus_voltage));
     json_object_object_add(root, "current", json_object_new_double(measurements->current));
     json_object_object_add(root, "power", json_object_new_double(measurements->power));
@@ -247,8 +334,8 @@ int mqtt_publish_ina3221_data(const ina3221_measurements_t *measurements)
    struct json_object *root = json_object_new_object();
    struct json_object *channels_array = json_object_new_array();
 
-   /* Add device type */
-   json_object_object_add(root, "device", json_object_new_string("SystemPower"));
+   /* OCP v1.4 envelope */
+   ocp_add_telemetry_envelope(root, "SystemPower");
    json_object_object_add(root, "chip", json_object_new_string("INA3221"));
    json_object_object_add(root, "num_channels", json_object_new_int(measurements->num_channels));
 
@@ -303,9 +390,9 @@ int mqtt_publish_daly_bms_data(const daly_device_t *daly_dev, const battery_conf
    struct json_object *temps_array = json_object_new_array();
    struct json_object *faults_array = json_object_new_array();
 
-   /* Add device type */
-   json_object_object_add(root, "device", json_object_new_string("Battery"));
-   json_object_object_add(root, "type", json_object_new_string("DalyBMS"));
+   /* OCP v1.4 envelope */
+   ocp_add_telemetry_envelope(root, "Battery");
+   json_object_object_add(root, "sensor", json_object_new_string("DalyBMS"));
 
    /* Add pack information */
    json_object_object_add(root, "voltage", json_object_new_double(data->pack.v_total_v));
@@ -423,8 +510,8 @@ int mqtt_publish_daly_health_data(const daly_device_t *daly_dev,
    struct json_object *critical_faults_array = json_object_new_array();
    struct json_object *warning_faults_array = json_object_new_array();
 
-   /* Add device type */
-   json_object_object_add(root, "device", json_object_new_string("BatteryHealth"));
+   /* OCP v1.4 envelope */
+   ocp_add_telemetry_envelope(root, "BatteryHealth");
 
    /* Add pack health information */
    json_object_object_add(root, "battery_status", json_object_new_string(daly_bms_health_string(health->overall_status)));
@@ -499,11 +586,8 @@ int mqtt_publish_daly_health_data(const daly_device_t *daly_dev,
    /* Convert to JSON string */
    const char *json_str = json_object_to_json_string(root);
 
-   /* Publish to MQTT */
-   char topic[128];
-   snprintf(topic, sizeof(topic), "%s/battery_health", current_topic);
-
-   int rc = mosquitto_publish(mosq, NULL, topic, strlen(json_str), json_str, 0, false);
+   /* Publish to MQTT (type field discriminates, no sub-topic needed) */
+   int rc = mosquitto_publish(mosq, NULL, current_topic, (int)strlen(json_str), json_str, 0, false);
    if (rc != MOSQ_ERR_SUCCESS) {
       OLOG_ERROR("MQTT: Failed to publish battery health message: %s", mosquitto_strerror(rc));
    }
@@ -538,8 +622,8 @@ int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurement
     struct json_object *root = json_object_new_object();
     struct json_object *sources_array = json_object_new_array();
 
-    /* Add device type */
-    json_object_object_add(root, "device", json_object_new_string("BatteryStatus"));
+    /* OCP v1.4 envelope */
+    ocp_add_telemetry_envelope(root, "BatteryStatus");
 
     /* Add sources */
     if (ina238_valid) {
@@ -848,8 +932,8 @@ int mqtt_publish_system_monitoring_data(float cpu_usage, float memory_usage, flo
    /* Create JSON object */
    struct json_object *root = json_object_new_object();
 
-   /* Add device type and measurements */
-   json_object_object_add(root, "device", json_object_new_string("SystemMetrics"));
+   /* OCP v1.4 envelope */
+   ocp_add_telemetry_envelope(root, "SystemMetrics");
    json_object_object_add(root, "cpu_usage", json_object_new_double(cpu_usage));
    json_object_object_add(root, "memory_usage", json_object_new_double(memory_usage));
    json_object_object_add(root, "system_temp", json_object_new_double(system_temp));
@@ -891,8 +975,8 @@ int mqtt_publish_fan_data(int rpm, int load_percent, int pwm)
    /* Create JSON object */
    struct json_object *root = json_object_new_object();
 
-   /* Add device type and measurements */
-   json_object_object_add(root, "device", json_object_new_string("Fan"));
+   /* OCP v1.4 envelope */
+   ocp_add_telemetry_envelope(root, "Fan");
    json_object_object_add(root, "rpm", json_object_new_int(rpm));
    json_object_object_add(root, "load", json_object_new_int(load_percent));
    json_object_object_add(root, "pwm", json_object_new_int(pwm));
@@ -916,8 +1000,8 @@ void mqtt_cleanup(void)
 {
    mqtt_initialized = false;
    if (mosq) {
-      mosquitto_loop_stop(mosq, true);
       mosquitto_disconnect(mosq);
+      mosquitto_loop_stop(mosq, false);
       mosquitto_destroy(mosq);
       mosq = NULL;
    }
