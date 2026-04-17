@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Job 1: Format Check (~30s)
+  # -------------------------------------------------------------------------
+  format-check:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Install clang-format-14
+        run: sudo apt-get update && sudo apt-get install -y clang-format-14
+
+      - name: Check formatting
+        run: ./format_code.sh --check
+
+  # -------------------------------------------------------------------------
+  # Job 2: Build + Unit Tests (~1 min)
+  # -------------------------------------------------------------------------
+  unit-tests:
+    needs: format-check
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake build-essential pkg-config \
+            libjson-c-dev libmosquitto-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: make -C build -j"$(nproc)"
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure --no-tests=ignore
