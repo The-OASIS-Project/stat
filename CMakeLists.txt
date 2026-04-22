@@ -93,3 +93,47 @@ if(NOT TARGET uninstall)
    add_custom_target(uninstall
       COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
 endif()
+
+# Unit tests (Unity framework)
+option(BUILD_TESTS "Build unit tests" ON)
+
+if(BUILD_TESTS)
+   enable_testing()
+
+   # Unity test framework (vendored). UNITY_INCLUDE_DOUBLE enables the
+   # double-precision assertion macros (TEST_ASSERT_DOUBLE_WITHIN, etc.)
+   # used by test_mqtt_json for json_object_get_double() comparisons.
+   add_library(unity STATIC tests/unity/unity.c)
+   target_include_directories(unity PUBLIC tests/unity)
+   target_compile_definitions(unity PUBLIC UNITY_INCLUDE_DOUBLE)
+
+   # Shared logging stub (tests don't need real logging)
+   add_library(stat_logging STATIC src/logging.c)
+   target_include_directories(stat_logging PUBLIC include)
+
+   # test_battery_model — voltage curves, chemistry parsing (no hardware)
+   add_executable(test_battery_model tests/test_battery_model.c src/battery_model.c)
+   target_link_libraries(test_battery_model unity m)
+   target_include_directories(test_battery_model PRIVATE include)
+   add_test(NAME test_battery_model COMMAND test_battery_model)
+
+   # test_daly_parsing — frame decoders + checksum (no serial)
+   add_executable(test_daly_parsing tests/test_daly_parsing.c src/daly_bms.c)
+   target_link_libraries(test_daly_parsing unity stat_logging m)
+   target_include_directories(test_daly_parsing PRIVATE include)
+   add_test(NAME test_daly_parsing COMMAND test_daly_parsing)
+
+   # test_daly_health — cell deviation + fault severity (no hardware)
+   add_executable(test_daly_health tests/test_daly_health.c src/daly_bms.c)
+   target_link_libraries(test_daly_health unity stat_logging m)
+   target_include_directories(test_daly_health PRIVATE include)
+   add_test(NAME test_daly_health COMMAND test_daly_health)
+
+   # test_mqtt_json — JSON envelope construction (no broker)
+   add_executable(test_mqtt_json tests/test_mqtt_json.c
+                  src/mqtt_publisher.c src/battery_model.c src/daly_bms.c)
+   target_link_libraries(test_mqtt_json unity stat_logging
+                         ${JSONC_LIBRARIES} ${MOSQUITTO_LIBRARIES} m)
+   target_include_directories(test_mqtt_json PRIVATE include ${JSONC_INCLUDE_DIRS})
+   add_test(NAME test_mqtt_json COMMAND test_mqtt_json)
+endif()

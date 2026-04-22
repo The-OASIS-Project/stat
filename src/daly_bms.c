@@ -30,10 +30,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "daly_bms_internal.h"
 #include "logging.h"
 
-/* Static function prototypes */
-static uint8_t daly_checksum(const uint8_t *data, size_t len);
+/* Internal function prototypes (not exposed to tests) */
 static int daly_build_request(uint8_t cmd, uint8_t *frame, const uint8_t *payload);
 static int daly_read_exact(int fd, uint8_t *buf, size_t len, int timeout_ms);
 static int daly_read_frame(int fd, uint8_t expected_cmd, uint8_t *data, int timeout_ms);
@@ -42,13 +42,11 @@ static int daly_request(int fd,
                         uint8_t *response,
                         int timeout_ms,
                         const uint8_t *payload);
-static uint16_t daly_get_u16be(const uint8_t *data, int offset);
 
-/* Data parsing functions */
-static void daly_parse_0x90(const uint8_t *data, daly_pack_summary_t *pack);
-static void daly_parse_0x91(const uint8_t *data, daly_extremes_t *extremes);
-static void daly_parse_0x92(const uint8_t *data, daly_temps_t *temps);
-static void daly_parse_0x93(const uint8_t *data, daly_mos_caps_t *mos);
+/* Non-static parse helpers declared in daly_bms_internal.h for test access:
+ * daly_checksum, daly_get_u16be, daly_parse_0x90/91/92/93/97/98 */
+
+/* Parse helpers that remain file-local (not yet unit-tested) */
 static void daly_parse_0x94(const uint8_t *data, daly_status_t *status);
 static void daly_parse_0x95_frames(const uint8_t **frames,
                                    int frame_count,
@@ -58,8 +56,6 @@ static void daly_parse_0x96_frames(const uint8_t **frames,
                                    int frame_count,
                                    int ntc_count,
                                    daly_temps_t *temps);
-static void daly_parse_0x97(const uint8_t *data, int cell_count, bool *balance);
-static void daly_parse_0x98(const uint8_t *data, char faults[][64], int *fault_count);
 
 /* Fault descriptions by byte and bit position */
 static const char *const daly_faults[8][8] = {
@@ -141,7 +137,7 @@ static const char *const daly_faults[8][8] = {
  *
  * The checksum is a simple sum of all bytes, truncated to 8 bits.
  */
-static uint8_t daly_checksum(const uint8_t *data, size_t len) {
+uint8_t daly_checksum(const uint8_t *data, size_t len) {
    uint8_t sum = 0;
    for (size_t i = 0; i < len; i++) {
       sum += data[i];
@@ -373,14 +369,14 @@ static int daly_request(int fd,
 /**
  * @brief Get 16-bit big-endian value from byte array
  */
-static uint16_t daly_get_u16be(const uint8_t *data, int offset) {
+uint16_t daly_get_u16be(const uint8_t *data, int offset) {
    return (uint16_t)((data[offset] << 8) | data[offset + 1]);
 }
 
 /**
  * @brief Parse basic pack info from 0x90 command response
  */
-static void daly_parse_0x90(const uint8_t *data, daly_pack_summary_t *pack) {
+void daly_parse_0x90(const uint8_t *data, daly_pack_summary_t *pack) {
    /* Daly places instantaneous pack voltage in bytes 0..1 (deci-volts). Some variants mirror
     * in 2..3. */
    float v0 = daly_get_u16be(data, 0) / 10.0f;
@@ -396,7 +392,7 @@ static void daly_parse_0x90(const uint8_t *data, daly_pack_summary_t *pack) {
 /**
  * @brief Parse cell voltage extremes from 0x91 command response
  */
-static void daly_parse_0x91(const uint8_t *data, daly_extremes_t *extremes) {
+void daly_parse_0x91(const uint8_t *data, daly_extremes_t *extremes) {
    extremes->vmax_v = daly_get_u16be(data, 0) / 1000.0f;
    extremes->vmax_cell = data[2];
    extremes->vmin_v = daly_get_u16be(data, 3) / 1000.0f;
@@ -406,7 +402,7 @@ static void daly_parse_0x91(const uint8_t *data, daly_extremes_t *extremes) {
 /**
  * @brief Parse temperature extremes from 0x92 command response
  */
-static void daly_parse_0x92(const uint8_t *data, daly_temps_t *temps) {
+void daly_parse_0x92(const uint8_t *data, daly_temps_t *temps) {
    temps->tmax_c = data[0] - 40;
    temps->tmax_idx = data[1];
    temps->tmin_c = data[2] - 40;
@@ -416,12 +412,14 @@ static void daly_parse_0x92(const uint8_t *data, daly_temps_t *temps) {
 /**
  * @brief Parse MOS status from 0x93 command response
  */
-static void daly_parse_0x93(const uint8_t *data, daly_mos_caps_t *mos) {
+void daly_parse_0x93(const uint8_t *data, daly_mos_caps_t *mos) {
    mos->state = data[0];
    mos->charge_mos = data[1] != 0;
    mos->discharge_mos = data[2] != 0;
    mos->life_cycles = data[3];
-   mos->remain_capacity_mah = (data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7];
+   /* Explicit uint32_t cast prevents sign-promotion of data[4] when bit 7 is set. */
+   mos->remain_capacity_mah = ((uint32_t)data[4] << 24) | ((uint32_t)data[5] << 16) |
+                              ((uint32_t)data[6] << 8) | (uint32_t)data[7];
 }
 
 /**
@@ -507,15 +505,17 @@ static void daly_parse_0x96_frames(const uint8_t **frames,
 /**
  * @brief Parse balance status from 0x97 command response
  */
-static void daly_parse_0x97(const uint8_t *data, int cell_count, bool *balance) {
+void daly_parse_0x97(const uint8_t *data, int cell_count, bool *balance) {
    /* Combine all bytes into a bit field */
    uint64_t bits = 0;
    for (int i = 0; i < 8; i++) {
       bits |= (uint64_t)data[i] << (8 * i);
    }
 
-   /* Extract balance status for each cell */
-   for (int i = 0; i < cell_count && i < DALY_MAX_CELLS; i++) {
+   /* Extract balance status for each cell. Cap at 64: the bit field is uint64_t,
+    * and shifting by >= 64 is undefined behavior. DALY_MAX_CELLS is 32 today,
+    * but bound defensively at the source. */
+   for (int i = 0; i < cell_count && i < DALY_MAX_CELLS && i < 64; i++) {
       balance[i] = (bits >> i) & 1;
    }
 }
@@ -523,7 +523,7 @@ static void daly_parse_0x97(const uint8_t *data, int cell_count, bool *balance) 
 /**
  * @brief Parse fault flags from 0x98 command response
  */
-static void daly_parse_0x98(const uint8_t *data, char faults[][64], int *fault_count) {
+void daly_parse_0x98(const uint8_t *data, char faults[][64], int *fault_count) {
    *fault_count = 0;
 
    for (int byte_idx = 0; byte_idx < 8; byte_idx++) {

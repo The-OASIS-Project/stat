@@ -36,6 +36,7 @@
 #include "ina238.h"
 #include "ina3221.h"
 #include "logging.h"
+#include "mqtt_publisher_internal.h"
 
 /* Forward declaration of battery_config_t */
 struct battery_config_t;
@@ -234,11 +235,17 @@ int mqtt_publish_status_offline(void) {
    return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
 }
 
-int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
-                              float battery_percentage,
-                              const battery_config_t *battery) {
-   if (!mqtt_initialized || !mosq || !measurements->valid) {
-      return -1;
+/**
+ * @brief Build the JSON payload for an INA238 battery telemetry message.
+ *
+ * Pure constructor — no broker interaction. Caller owns the returned object
+ * and must call json_object_put() when done.
+ */
+struct json_object *build_battery_json(const ina238_measurements_t *measurements,
+                                       float battery_percentage,
+                                       const battery_config_t *battery) {
+   if (!measurements || !measurements->valid) {
+      return NULL;
    }
 
    /* Determine battery status */
@@ -296,6 +303,21 @@ int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
       json_object_object_add(root, "battery_capacity_mah",
                              json_object_new_double(battery->capacity_mah));
       json_object_object_add(root, "battery_cells", json_object_new_int(battery->cells_series));
+   }
+
+   return root;
+}
+
+int mqtt_publish_battery_data(const ina238_measurements_t *measurements,
+                              float battery_percentage,
+                              const battery_config_t *battery) {
+   if (!mqtt_initialized || !mosq || !measurements || !measurements->valid) {
+      return -1;
+   }
+
+   struct json_object *root = build_battery_json(measurements, battery_percentage, battery);
+   if (!root) {
+      return -1;
    }
 
    /* Convert to JSON string */
@@ -370,11 +392,15 @@ int mqtt_publish_ina3221_data(const ina3221_measurements_t *measurements) {
 }
 
 /**
- * @brief Publish Daly BMS data to MQTT
+ * @brief Build the JSON payload for a Daly BMS telemetry message.
+ *
+ * Pure constructor — no broker interaction. Caller owns the returned object
+ * and must call json_object_put() when done.
  */
-int mqtt_publish_daly_bms_data(const daly_device_t *daly_dev, const battery_config_t *battery) {
-   if (!mqtt_initialized || !mosq || !daly_dev || !daly_dev->initialized || !daly_dev->data.valid) {
-      return -1;
+struct json_object *build_daly_bms_json(const daly_device_t *daly_dev,
+                                        const battery_config_t *battery) {
+   if (!daly_dev || !daly_dev->data.valid) {
+      return NULL;
    }
 
    const daly_data_t *data = &daly_dev->data;
@@ -480,6 +506,19 @@ int mqtt_publish_daly_bms_data(const daly_device_t *daly_dev, const battery_conf
 
    json_object_object_add(root, "time_remaining_min", json_object_new_double(smoothed_time));
    json_object_object_add(root, "time_remaining_fmt", json_object_new_string(time_str));
+
+   return root;
+}
+
+int mqtt_publish_daly_bms_data(const daly_device_t *daly_dev, const battery_config_t *battery) {
+   if (!mqtt_initialized || !mosq || !daly_dev || !daly_dev->initialized || !daly_dev->data.valid) {
+      return -1;
+   }
+
+   struct json_object *root = build_daly_bms_json(daly_dev, battery);
+   if (!root) {
+      return -1;
+   }
 
    /* Convert to JSON string */
    const char *json_str = json_object_to_json_string(root);
