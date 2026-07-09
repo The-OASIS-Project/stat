@@ -63,6 +63,7 @@ typedef enum {
    BAT_2S_LIPO,
    BAT_3S_LIPO,
    BAT_6S_LIPO,
+   BAT_4S1P_SAMSUNG50E,
    BAT_4S2P_SAMSUNG50E,
    BAT_3S_5200MAH_LIPO,
    BAT_3S_2200MAH_LIPO,
@@ -85,6 +86,8 @@ static const battery_config_t battery_configs[] = {
    { 18.0f, 25.2f, 22.2f, 20.0f, 10.0f, 5000.0f, 6, 1, BATT_CHEMISTRY_LIPO, "6S_LiPo" },  // 6S LiPo
 
    /* User-requested specific configurations */
+   { 12.0f, 16.8f, 14.4f, 20.0f, 10.0f, 5000.0f, 4, 1, BATT_CHEMISTRY_LIION,
+     "4S1P_Samsung50E" },  // 4S1P Samsung 50E
    { 12.0f, 16.8f, 14.4f, 20.0f, 10.0f, 10000.0f, 4, 2, BATT_CHEMISTRY_LIION,
      "4S2P_Samsung50E" },  // 4S2P Samsung 50E
    { 9.0f, 12.6f, 11.1f, 20.0f, 10.0f, 5200.0f, 3, 1, BATT_CHEMISTRY_LIPO,
@@ -96,6 +99,29 @@ static const battery_config_t battery_configs[] = {
 };
 
 #define NUM_BATTERY_CONFIGS ((int)(sizeof(battery_configs) / sizeof(battery_configs[0])))
+
+/* The battery_configs[] rows are indexed by stat_battery_t (e.g. the compiled-in
+ * default uses battery_configs[BAT_4S2P_SAMSUNG50E]), so the enum and the table
+ * must stay parallel. Catch drift at compile time if a row is added to only one. */
+_Static_assert(NUM_BATTERY_CONFIGS == BAT_3S_1500MAH_LIPO + 1,
+               "stat_battery_t and battery_configs[] are out of sync");
+
+/**
+ * @brief Select a predefined battery configuration by name.
+ *
+ * @param name Battery configuration name to match (case-sensitive).
+ * @param out  Destination configuration, populated on match.
+ * @return int 0 on success, -1 if no configuration matches the name.
+ */
+static int select_battery_by_name(const char *name, battery_config_t *out) {
+   for (int i = 0; i < NUM_BATTERY_CONFIGS; i++) {
+      if (strcmp(name, battery_configs[i].name) == 0) {
+         *out = battery_configs[i];
+         return 0;
+      }
+   }
+   return -1;
+}
 
 /* STAT Version Information */
 #define STAT_VERSION_MAJOR 1
@@ -167,11 +193,11 @@ static void print_version(void) {
  */
 static void print_battery_configs(void) {
    printf("Available battery configurations:\n");
-   for (int i = 0; i < NUM_BATTERY_CONFIGS - 1; i++) {  // Exclude 'custom'
-      printf("  %-12s: %.1fV - %.1fV\n", battery_configs[i].name, battery_configs[i].min_voltage,
+   for (int i = 0; i < NUM_BATTERY_CONFIGS; i++) {
+      printf("  %-16s: %.1fV - %.1fV\n", battery_configs[i].name, battery_configs[i].min_voltage,
              battery_configs[i].max_voltage);
    }
-   printf("  %-12s: Use --battery-min and --battery-max to specify range\n", "custom");
+   printf("  %-16s: Use --battery-min and --battery-max to specify range\n", "custom");
 }
 
 /**
@@ -196,7 +222,8 @@ static void print_usage(const char *prog_name) {
    printf("  ina238  - Use INA238 single-channel power monitor (I2C direct)\n");
    printf("  ina3221 - Use INA3221 3-channel power monitor (sysfs/hwmon)\n");
    printf("  both    - Use both INA238 and INA3221 simultaneously\n\n");
-   printf("      --battery TYPE     Battery type (default: 5S_Li-ion)\n");
+   printf(
+       "      --battery TYPE     Battery type (or env BATTERY_TYPE, default: 4S2P_Samsung50E)\n");
    printf("      --battery-min V    Custom battery minimum voltage\n");
    printf("      --battery-max V    Custom battery maximum voltage\n");
    printf("      --battery-warn %%   Battery warning threshold percent (default: 20)\n");
@@ -700,6 +727,20 @@ int main(int argc, char *argv[]) {
       exit(EXIT_FAILURE);
    }
 
+   /* Apply the BATTERY_TYPE environment variable (for the systemd service, which
+    * exports it from /etc/oasis/stat.conf). This is layered default -> env -> CLI:
+    * a --battery flag replaces the pack wholesale below, while --battery-* flags
+    * tweak individual fields on top of whatever pack is selected here. An invalid
+    * value keeps the default and logs (rather than aborting) so --list-batteries
+    * and --help still work when the env value is the thing being fixed. */
+   const char *battery_env = getenv("BATTERY_TYPE");
+   if (battery_env && battery_env[0] != '\0') {
+      if (select_battery_by_name(battery_env, &battery_config) != 0) {
+         OLOG_ERROR("Unknown battery type '%s' (from BATTERY_TYPE); using default %s", battery_env,
+                    battery_config.name);
+      }
+   }
+
    /* Parse command line arguments (can override auto-detected defaults) */
    int opt;
    int option_index = 0;
@@ -736,21 +777,12 @@ int main(int argc, char *argv[]) {
             }
             break;
          case 1000:  // --battery
-         {
-            bool found = false;
-            for (int i = 0; i < NUM_BATTERY_CONFIGS; i++) {
-               if (strcmp(optarg, battery_configs[i].name) == 0) {
-                  battery_config = battery_configs[i];
-                  found = true;
-                  break;
-               }
-            }
-            if (!found) {
+            if (select_battery_by_name(optarg, &battery_config) != 0) {
                OLOG_ERROR("Error: Unknown battery type '%s'", optarg);
                OLOG_ERROR("Use --list-batteries to see available types");
                return EXIT_FAILURE;
             }
-         } break;
+            break;
          case 1001:  // --battery-min
             strcpy((char *)battery_config.name, "custom");
             battery_config.min_voltage = atof(optarg);
@@ -928,6 +960,13 @@ int main(int argc, char *argv[]) {
          mqtt_tls = 1;
       }
    }
+
+   /* Battery configuration is now fully resolved (default -> env -> CLI). Log it
+    * so the selected pack is visible in both interactive and service mode. */
+   OLOG_INFO("Battery profile: %s (%s, %dS%dP, %.0f mAh, %.1fV-%.1fV)", battery_config.name,
+             battery_chemistry_to_string(battery_config.chemistry), battery_config.cells_series,
+             battery_config.cells_parallel, battery_config.capacity_mah, battery_config.min_voltage,
+             battery_config.max_voltage);
 
    /* Auto-detect power monitors if not specified - Check INA3221 first */
    if (power_monitor == POWER_MONITOR_NONE) {

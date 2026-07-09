@@ -34,11 +34,19 @@ sudo usermod -a -G dialout oasis
 echo "Setting up configuration directory..."
 sudo mkdir -p /etc/oasis
 
-# Install configuration file
-echo "Installing configuration file..."
-sudo cp "${SCRIPT_DIR}/config/stat.conf" /etc/oasis/
-sudo chown oasis:oasis /etc/oasis/stat.conf
-sudo chmod 640 /etc/oasis/stat.conf
+# Install configuration file (never overwrite an existing local config)
+if [ -f /etc/oasis/stat.conf ]; then
+    echo "Existing configuration found at /etc/oasis/stat.conf - preserving it."
+    echo "Installing packaged template as /etc/oasis/stat.conf.new for reference."
+    sudo cp "${SCRIPT_DIR}/config/stat.conf" /etc/oasis/stat.conf.new
+    sudo chown oasis:oasis /etc/oasis/stat.conf.new
+    sudo chmod 640 /etc/oasis/stat.conf.new
+else
+    echo "Installing configuration file..."
+    sudo cp "${SCRIPT_DIR}/config/stat.conf" /etc/oasis/stat.conf
+    sudo chown oasis:oasis /etc/oasis/stat.conf
+    sudo chmod 640 /etc/oasis/stat.conf
+fi
 
 # Install systemd service file
 echo "Installing systemd service..."
