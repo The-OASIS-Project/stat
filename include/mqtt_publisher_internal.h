@@ -28,6 +28,7 @@
 #include "battery_model.h"
 #include "daly_bms.h"
 #include "ina238.h"
+#include "network_monitor.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,6 +62,19 @@ struct json_object *build_battery_json(const ina238_measurements_t *measurements
  */
 struct json_object *build_daly_bms_json(const daly_device_t *daly_dev,
                                         const battery_config_t *battery);
+
+/**
+ * @brief Build the JSON payload for a Network telemetry message.
+ *
+ * Pure constructor — no broker interaction. Caller owns the returned object
+ * and must call json_object_put() when done. Emits the "Network" OCP envelope
+ * with interfaces[], default_routes[], and reachability[] per the design
+ * contract (docs/NETWORK_MONITORING.md §5).
+ *
+ * @param status Populated network snapshot (must be non-NULL).
+ * @return struct json_object* Newly allocated JSON object, or NULL on error.
+ */
+struct json_object *build_network_json(const network_status_t *status);
 
 #ifdef __cplusplus
 }

@@ -1042,6 +1042,120 @@ int mqtt_publish_fan_data(int rpm, int load_percent, int pwm) {
    return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
 }
 
+struct json_object *build_network_json(const network_status_t *status) {
+   if (!status) {
+      return NULL;
+   }
+
+   struct json_object *root = json_object_new_object();
+   ocp_add_telemetry_envelope(root, "Network");
+
+   if (status->hostname[0]) {
+      json_object_object_add(root, "hostname", json_object_new_string(status->hostname));
+   }
+
+   /* interfaces[] */
+   struct json_object *ifaces = json_object_new_array();
+   for (size_t i = 0; i < status->iface_count; i++) {
+      const network_iface_t *ifc = &status->ifaces[i];
+      struct json_object *o = json_object_new_object();
+      json_object_object_add(o, "name", json_object_new_string(ifc->name));
+      json_object_object_add(o, "kind", json_object_new_string(network_kind_str(ifc->kind)));
+      json_object_object_add(o, "driver", json_object_new_string(ifc->driver));
+      json_object_object_add(o, "state", json_object_new_string(ifc->operstate));
+      json_object_object_add(o, "up", json_object_new_boolean(ifc->up));
+      json_object_object_add(o, "carrier", json_object_new_boolean(ifc->carrier));
+      json_object_object_add(o, "mtu", json_object_new_int(ifc->mtu));
+      json_object_object_add(o, "speed_mbps", json_object_new_int(ifc->speed_mbps));
+      json_object_object_add(o, "mac", json_object_new_string(ifc->mac));
+
+      struct json_object *v4 = json_object_new_array();
+      for (size_t j = 0; j < ifc->ipv4_count; j++) {
+         json_object_array_add(v4, json_object_new_string(ifc->ipv4[j]));
+      }
+      json_object_object_add(o, "ipv4", v4);
+
+      struct json_object *v6 = json_object_new_array();
+      for (size_t j = 0; j < ifc->ipv6_count; j++) {
+         json_object_array_add(v6, json_object_new_string(ifc->ipv6[j]));
+      }
+      json_object_object_add(o, "ipv6", v6);
+
+      if (ifc->ipv4_truncated || ifc->ipv6_truncated) {
+         json_object_object_add(o, "addr_truncated", json_object_new_boolean(true));
+      }
+      json_object_object_add(o, "rx_bytes", json_object_new_int64((int64_t)ifc->rx_bytes));
+      json_object_object_add(o, "tx_bytes", json_object_new_int64((int64_t)ifc->tx_bytes));
+      json_object_array_add(ifaces, o);
+   }
+   json_object_object_add(root, "interfaces", ifaces);
+   if (status->iface_truncated) {
+      json_object_object_add(root, "interfaces_truncated", json_object_new_boolean(true));
+   }
+
+   /* default_routes[] */
+   struct json_object *routes = json_object_new_array();
+   for (size_t i = 0; i < status->route_count; i++) {
+      const network_route_t *r = &status->routes[i];
+      struct json_object *o = json_object_new_object();
+      json_object_object_add(o, "iface", json_object_new_string(r->iface));
+      json_object_object_add(o, "gateway", json_object_new_string(r->gateway));
+      json_object_object_add(o, "metric", json_object_new_int64(r->metric));
+      json_object_object_add(
+          o, "family", json_object_new_string(r->family == NET_FAMILY_IPV6 ? "ipv6" : "ipv4"));
+      json_object_array_add(routes, o);
+   }
+   json_object_object_add(root, "default_routes", routes);
+   if (status->route_truncated) {
+      json_object_object_add(root, "routes_truncated", json_object_new_boolean(true));
+   }
+
+   /* reachability[] (may be empty when probing is off or unavailable) */
+   struct json_object *reach = json_object_new_array();
+   for (size_t i = 0; i < status->reach_count; i++) {
+      const network_reach_t *rc = &status->reach[i];
+      struct json_object *o = json_object_new_object();
+      json_object_object_add(o, "gateway", json_object_new_string(rc->gateway));
+      json_object_object_add(o, "iface", json_object_new_string(rc->iface));
+      json_object_object_add(o, "target_kind", json_object_new_string("gateway"));
+      json_object_object_add(o, "reachable", json_object_new_boolean(rc->reachable));
+      if (rc->reachable) {
+         json_object_object_add(o, "rtt_ms", json_object_new_double(rc->rtt_ms));
+      }
+      json_object_object_add(o, "fail_streak", json_object_new_int(rc->fail_streak));
+      json_object_object_add(o, "bound", json_object_new_boolean(rc->bound));
+      json_object_array_add(reach, o);
+   }
+   json_object_object_add(root, "reachability", reach);
+
+   /* Lets a consumer distinguish "probing off/unavailable" (false) from
+    * "probing ran but there were no gateways to probe" (true, empty array). */
+   json_object_object_add(root, "probe_available",
+                          json_object_new_boolean(status->probe_available));
+
+   return root;
+}
+
+int mqtt_publish_network_data(const network_status_t *status) {
+   if (!mqtt_initialized || !mosq || !status) {
+      return -1;
+   }
+
+   struct json_object *root = build_network_json(status);
+   if (!root) {
+      return -1;
+   }
+
+   const char *json_str = json_object_to_json_string(root);
+   int rc = mosquitto_publish(mosq, NULL, current_topic, strlen(json_str), json_str, 0, false);
+   if (rc != MOSQ_ERR_SUCCESS) {
+      OLOG_ERROR("MQTT: Failed to publish Network message: %s", mosquitto_strerror(rc));
+   }
+
+   json_object_put(root);
+   return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
+}
+
 void mqtt_cleanup(void) {
    mqtt_initialized = false;
    if (mosq) {

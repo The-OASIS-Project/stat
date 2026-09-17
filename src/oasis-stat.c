@@ -49,6 +49,7 @@
 #include "logging.h"
 #include "memory_monitor.h"
 #include "mqtt_publisher.h"
+#include "network_monitor.h"
 #include "string_utils.h"
 #include "system_temp_monitor.h"
 
@@ -159,6 +160,10 @@ static float bms_soc = -1.0f;
 static int cell_warning_threshold_mv = DALY_CELL_WARNING_THRESHOLD_MV;
 static int cell_critical_threshold_mv = DALY_CELL_CRITICAL_THRESHOLD_MV;
 
+/* Network monitoring (on by default; hardware-free). */
+static bool net_enable = true;
+static network_config_t net_cfg = { true, 500, 5000 };
+
 /* Function Prototypes */
 static void print_usage(const char *prog_name);
 static void print_version(void);
@@ -246,6 +251,12 @@ static void print_usage(const char *prog_name) {
    printf("      --mqtt-password PASS  MQTT password (or env MQTT_PASSWORD)\n");
    printf("      --mqtt-tls            Enable MQTT TLS encryption\n");
    printf("      --mqtt-ca-cert PATH   Path to CA certificate (implies --mqtt-tls)\n");
+   printf("\nNetwork Monitoring Options (on by default):\n");
+   printf("      --net-enable          Enable network telemetry (overrides NET_ENABLE=false)\n");
+   printf("      --net-disable         Disable network telemetry\n");
+   printf("      --net-interval MS     Poll interval in ms (clamped 1000-60000, default: 5000)\n");
+   printf("      --net-probe-disable   Disable the gateway reachability probe\n");
+   printf("      --net-probe-timeout MS Probe deadline in ms (clamped 50-5000, default: 500)\n");
    printf("\nDaly BMS Options:\n");
    printf("      --bms-enable         Enable Daly BMS monitoring\n");
    printf("      --bms-port PORT      Serial port for BMS (default: /dev/ttyTHS1)\n");
@@ -636,6 +647,18 @@ static void print_enhanced_daly_data(const daly_device_t *daly_dev,
 }
 
 /**
+ * @brief Monotonic millisecond clock for poll throttling.
+ *
+ * CLOCK_MONOTONIC does not jump when NTP steps the wall clock (which happens
+ * exactly when the network comes up), unlike time(NULL).
+ */
+static long long monotonic_ms(void) {
+   struct timespec ts;
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+   return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
+/**
  * @brief Main application entry point
  */
 int main(int argc, char *argv[]) {
@@ -703,6 +726,11 @@ int main(int argc, char *argv[]) {
                                            { "mqtt-password", required_argument, 0, 3001 },
                                            { "mqtt-tls", no_argument, 0, 3002 },
                                            { "mqtt-ca-cert", required_argument, 0, 3003 },
+                                           { "net-disable", no_argument, 0, 4000 },
+                                           { "net-interval", required_argument, 0, 4001 },
+                                           { "net-probe-disable", no_argument, 0, 4002 },
+                                           { "net-probe-timeout", required_argument, 0, 4003 },
+                                           { "net-enable", no_argument, 0, 4004 },
                                            { "service", no_argument, 0, 'e' },
                                            { "help", no_argument, 0, 'h' },
                                            { "version", no_argument, 0, 'v' },
@@ -743,6 +771,10 @@ int main(int argc, char *argv[]) {
                     battery_config.name);
       }
    }
+
+   /* Network monitoring config from environment (NET_*); CLI overrides below.
+    * network_config_from_env() returns FAILURE when NET_ENABLE disables it. */
+   net_enable = (network_config_from_env(&net_cfg) == SUCCESS);
 
    /* Parse command line arguments (can override auto-detected defaults) */
    int opt;
@@ -918,6 +950,33 @@ int main(int argc, char *argv[]) {
             strncpy(mqtt_tls_ca_cert, optarg, sizeof(mqtt_tls_ca_cert) - 1);
             mqtt_tls_ca_cert[sizeof(mqtt_tls_ca_cert) - 1] = '\0';
             mqtt_tls = 1; /* Implies TLS */
+            break;
+         case 4000:  // net-disable
+            net_enable = false;
+            break;
+         case 4001:  // net-interval (clamp-and-warn, matching env behavior)
+            net_cfg.interval_ms = atoi(optarg);
+            if (net_cfg.interval_ms < 1000 || net_cfg.interval_ms > 60000) {
+               int clamped = net_cfg.interval_ms < 1000 ? 1000 : 60000;
+               OLOG_WARNING("--net-interval %d out of range [1000,60000]; clamping to %d",
+                            net_cfg.interval_ms, clamped);
+               net_cfg.interval_ms = clamped;
+            }
+            break;
+         case 4002:  // net-probe-disable
+            net_cfg.probe_enabled = false;
+            break;
+         case 4003:  // net-probe-timeout (clamp-and-warn, matching env behavior)
+            net_cfg.probe_timeout_ms = atoi(optarg);
+            if (net_cfg.probe_timeout_ms < 50 || net_cfg.probe_timeout_ms > 5000) {
+               int clamped = net_cfg.probe_timeout_ms < 50 ? 50 : 5000;
+               OLOG_WARNING("--net-probe-timeout %d out of range [50,5000]; clamping to %d",
+                            net_cfg.probe_timeout_ms, clamped);
+               net_cfg.probe_timeout_ms = clamped;
+            }
+            break;
+         case 4004:  // net-enable (reverse an env NET_ENABLE=false for a one-off run)
+            net_enable = true;
             break;
          case 'e':  // service mode
             service_mode = true;
@@ -1148,6 +1207,15 @@ int main(int argc, char *argv[]) {
       OLOG_WARNING("Fan monitoring initialization failed");
    }
 
+   if (net_enable) {
+      if (network_monitor_init(&net_cfg) == SUCCESS) {
+         OLOG_INFO("Network monitoring initialized");
+      } else {
+         OLOG_WARNING("Network monitoring initialization failed");
+         net_enable = false;
+      }
+   }
+
    /* Print device status */
    if (ina238_dev.initialized) {
       ina238_print_status(&ina238_dev);
@@ -1156,10 +1224,13 @@ int main(int argc, char *argv[]) {
       ina3221_print_status(&ina3221_dev);
    }
 
-   static time_t last_bms_poll = 0;
+   static long long last_bms_poll_ms = -1;
    static daly_pack_health_t bms_health = { 0 };
    static daly_fault_summary_t bms_faults = { 0 };
    static bool bms_health_valid = false;
+
+   static long long last_net_poll_ms = -1;
+   static network_status_t net_status;
 
    /* Main monitoring loop */
    while (g_running) {
@@ -1193,8 +1264,8 @@ int main(int argc, char *argv[]) {
 
       /* Read from Daly BMS if enabled */
       if (bms_enable) {
-         time_t now = time(NULL);
-         if (now - last_bms_poll >= (bms_interval_ms / 1000)) {
+         long long now_ms = monotonic_ms();
+         if (last_bms_poll_ms < 0 || now_ms - last_bms_poll_ms >= bms_interval_ms) {
             if (daly_bms_poll(&daly_dev) == 0) {
                /* Free previous health data if any */
                if (bms_health_valid && bms_health.cells) {
@@ -1214,7 +1285,7 @@ int main(int argc, char *argv[]) {
                mqtt_publish_daly_bms_data(&daly_dev, &battery_config);
                mqtt_publish_daly_health_data(&daly_dev, &bms_health, &bms_faults);
 
-               last_bms_poll = now;
+               last_bms_poll_ms = now_ms;
             }
          }
       }
@@ -1247,6 +1318,18 @@ int main(int argc, char *argv[]) {
 
          mqtt_publish_fan_data(system_metrics.fan_rpm, system_metrics.fan_load,
                                system_metrics.fan_pwm);
+      }
+
+      /* Network telemetry on its own (slower) cadence — state changes slowly, so
+       * we do not re-serialize a multi-interface payload every power tick. */
+      if (net_enable) {
+         long long now_ms = monotonic_ms();
+         if (last_net_poll_ms < 0 || now_ms - last_net_poll_ms >= net_cfg.interval_ms) {
+            if (network_monitor_sample(&net_status) == SUCCESS) {
+               mqtt_publish_network_data(&net_status);
+            }
+            last_net_poll_ms = now_ms;
+         }
       }
 
       if (!service_mode) {
@@ -1288,6 +1371,9 @@ int main(int argc, char *argv[]) {
    memory_monitor_cleanup();
    system_temp_monitor_cleanup();
    fan_monitor_cleanup();
+   if (net_enable) {
+      network_monitor_cleanup();
+   }
    mqtt_publish_status_offline();
    mqtt_cleanup();
    if (power_monitor == POWER_MONITOR_INA238 || power_monitor == POWER_MONITOR_BOTH) {

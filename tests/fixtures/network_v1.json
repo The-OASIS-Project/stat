@@ -1,0 +1,50 @@
+{
+  "device": "stat",
+  "msg_type": "telemetry",
+  "type": "Network",
+  "timestamp": 1750000000000,
+  "hostname": "oasis-jetson",
+  "interfaces": [
+    {
+      "name": "enP8p1s0",
+      "kind": "ethernet",
+      "driver": "r8168",
+      "state": "up",
+      "up": true,
+      "carrier": true,
+      "mtu": 1500,
+      "speed_mbps": 1000,
+      "mac": "48:b0:2d:00:00:00",
+      "ipv4": ["192.168.1.159"],
+      "ipv6": ["2600:1702:51ae:6ef:1482:3363:9c07:5ef5"],
+      "rx_bytes": 12345678,
+      "tx_bytes": 2345678
+    },
+    {
+      "name": "usb0",
+      "kind": "cellular",
+      "driver": "rndis_host",
+      "state": "unknown",
+      "up": true,
+      "carrier": true,
+      "mtu": 1420,
+      "speed_mbps": -1,
+      "mac": "1e:0e:90:11:00:00",
+      "ipv4": ["192.168.225.40"],
+      "ipv6": ["2607:fb90:7c1c:ccc7:6627:9487:834b:af2b"],
+      "rx_bytes": 987654,
+      "tx_bytes": 456789
+    }
+  ],
+  "default_routes": [
+    { "iface": "enP8p1s0", "gateway": "192.168.1.1", "metric": 100, "family": "ipv4" },
+    { "iface": "usb0", "gateway": "192.168.225.1", "metric": 20100, "family": "ipv4" },
+    { "iface": "enP8p1s0", "gateway": "fe80::c206:c3ff:feaa:8f88", "metric": 100, "family": "ipv6" },
+    { "iface": "usb0", "gateway": "fe80::2cf3:6884:8c6c:77a1", "metric": 20100, "family": "ipv6" }
+  ],
+  "reachability": [
+    { "gateway": "192.168.1.1", "iface": "enP8p1s0", "target_kind": "gateway", "reachable": true, "rtt_ms": 0.4, "fail_streak": 0, "bound": true },
+    { "gateway": "192.168.225.1", "iface": "usb0", "target_kind": "gateway", "reachable": true, "rtt_ms": 2.2, "fail_streak": 0, "bound": true }
+  ],
+  "probe_available": true
+}

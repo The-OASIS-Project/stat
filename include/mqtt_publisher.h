@@ -31,6 +31,7 @@
 #include "daly_bms.h"
 #include "ina238.h"
 #include "ina3221.h"
+#include "network_monitor.h"
 
 /* MQTT Configuration */
 #define MQTT_DEFAULT_HOST "localhost"
@@ -144,6 +145,14 @@ int mqtt_publish_system_monitoring_data(float cpu_usage, float memory_usage, flo
  * @return int 0 on success, negative on error
  */
 int mqtt_publish_fan_data(int rpm, int load_percent, int pwm);
+
+/**
+ * @brief Publish network telemetry (interfaces, routes, reachability) to MQTT
+ *
+ * @param status Populated network snapshot
+ * @return int 0 on success, negative on error
+ */
+int mqtt_publish_network_data(const network_status_t *status);
 
 /**
  * @brief Clean up MQTT resources

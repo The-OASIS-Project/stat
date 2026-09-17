@@ -40,6 +40,7 @@ set(SOURCES
    src/logging.c
    src/memory_monitor.c
    src/mqtt_publisher.c
+   src/network_monitor.c
    src/oasis-stat.c
    src/system_temp_monitor.c
 )
@@ -58,6 +59,7 @@ set(HEADERS
    include/logging.h
    include/memory_monitor.h
    include/mqtt_publisher.h
+   include/network_monitor.h
 )
 
 # Create executable
@@ -131,9 +133,20 @@ if(BUILD_TESTS)
 
    # test_mqtt_json — JSON envelope construction (no broker)
    add_executable(test_mqtt_json tests/test_mqtt_json.c
-                  src/mqtt_publisher.c src/battery_model.c src/daly_bms.c)
+                  src/mqtt_publisher.c src/battery_model.c src/daly_bms.c src/network_monitor.c)
    target_link_libraries(test_mqtt_json unity stat_logging
                          ${JSONC_LIBRARIES} ${MOSQUITTO_LIBRARIES} m)
    target_include_directories(test_mqtt_json PRIVATE include ${JSONC_INCLUDE_DIRS})
    add_test(NAME test_mqtt_json COMMAND test_mqtt_json)
+
+   # test_network_monitor — /proc parsers, filter/classify, ICMP reply, and the
+   # Network JSON envelope (no broker, no live network).
+   add_executable(test_network_monitor tests/test_network_monitor.c
+                  src/network_monitor.c src/mqtt_publisher.c src/battery_model.c src/daly_bms.c)
+   target_link_libraries(test_network_monitor unity stat_logging
+                         ${JSONC_LIBRARIES} ${MOSQUITTO_LIBRARIES} m)
+   target_include_directories(test_network_monitor PRIVATE include ${JSONC_INCLUDE_DIRS})
+   target_compile_definitions(test_network_monitor PRIVATE
+                              NETWORK_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network_v1.json")
+   add_test(NAME test_network_monitor COMMAND test_network_monitor)
 endif()
