@@ -62,7 +62,7 @@ int ark_read_serial_number(char *serial_number) {
 
    /* Convert binary data to hex string */
    for (int i = 0; i < ARK_SERIAL_LENGTH; i++) {
-      sprintf(&serial_number[i * 2], "%02x", serial_data[i]);
+      snprintf(&serial_number[i * 2], 3, "%02x", serial_data[i]);
    }
    serial_number[ARK_SERIAL_LENGTH * 2] = '\0';
 

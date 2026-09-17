@@ -49,6 +49,7 @@
 #include "logging.h"
 #include "memory_monitor.h"
 #include "mqtt_publisher.h"
+#include "string_utils.h"
 #include "system_temp_monitor.h"
 
 /* Application Configuration */
@@ -449,9 +450,11 @@ static void print_daly_bms_data(const daly_device_t *daly_dev) {
 
    printf("  Cycles:       %d\n", data->mos.life_cycles);
 
-   /* Balance status */
+   /* Balance status. cell_count is clamped at the 0x94 parse source, but bound
+    * the index against the array size too so no consumer relies on a single
+    * upstream clamp (matches every other cell loop). */
    int balance_count = 0;
-   for (int i = 0; i < data->status.cell_count; i++) {
+   for (int i = 0; i < data->status.cell_count && i < DALY_MAX_CELLS; i++) {
       if (data->balance[i])
          balance_count++;
    }
@@ -784,12 +787,12 @@ int main(int argc, char *argv[]) {
             }
             break;
          case 1001:  // --battery-min
-            strcpy((char *)battery_config.name, "custom");
+            safe_strscpy(battery_config.name, "custom");
             battery_config.min_voltage = atof(optarg);
             custom_battery = true;
             break;
          case 1002:  // --battery-max
-            strcpy((char *)battery_config.name, "custom");
+            safe_strscpy(battery_config.name, "custom");
             battery_config.max_voltage = atof(optarg);
             custom_battery = true;
             break;
@@ -803,22 +806,22 @@ int main(int argc, char *argv[]) {
             print_battery_configs();
             return EXIT_SUCCESS;
          case 1006:  // --battery-capacity
-            strcpy((char *)battery_config.name, "custom");
+            safe_strscpy(battery_config.name, "custom");
             battery_config.capacity_mah = atof(optarg);
             custom_battery = true;
             break;
          case 1007:  // --battery-chemistry
-            strcpy((char *)battery_config.name, "custom");
+            safe_strscpy(battery_config.name, "custom");
             battery_config.chemistry = battery_chemistry_from_string(optarg);
             custom_battery = true;
             break;
          case 1008:  // --battery-cells
-            strcpy((char *)battery_config.name, "custom");
+            safe_strscpy(battery_config.name, "custom");
             battery_config.cells_series = atoi(optarg);
             custom_battery = true;
             break;
          case 1009:  // --battery-parallel
-            strcpy((char *)battery_config.name, "custom");
+            safe_strscpy(battery_config.name, "custom");
             battery_config.cells_parallel = atoi(optarg);
             custom_battery = true;
             break;

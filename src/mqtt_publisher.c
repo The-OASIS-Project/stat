@@ -908,7 +908,10 @@ int mqtt_publish_unified_battery(const ina238_measurements_t *ina238_measurement
    if (daly_valid && daly_dev->data.status.cell_count > 0) {
       struct json_object *cells_array = json_object_new_array();
 
-      for (int i = 0; i < daly_dev->data.status.cell_count; i++) {
+      /* Bound against the fixed array size, not just cell_count (matches the
+       * sibling loop above). Guards against an out-of-bounds read leaking
+       * adjacent stack memory into the published telemetry. */
+      for (int i = 0; i < daly_dev->data.status.cell_count && i < DALY_MAX_CELLS; i++) {
          struct json_object *cell_obj = json_object_new_object();
          json_object_object_add(cell_obj, "index", json_object_new_int(i + 1));
          json_object_object_add(cell_obj, "voltage",

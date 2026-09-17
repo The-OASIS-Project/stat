@@ -36,6 +36,7 @@
 #include <unistd.h>
 
 #include "logging.h"
+#include "string_utils.h"
 
 /* Private function prototypes */
 static int ina3221_read_sysfs_file(const char *path, char *buffer, size_t buffer_size);
@@ -101,7 +102,7 @@ static int ina3221_find_hwmon_path(const char *base_path, char *hwmon_path, size
          /* Use the first match */
          size_t copy_len = strlen(glob_result.gl_pathv[0]);
          if (copy_len < path_size) {
-            strcpy(hwmon_path, glob_result.gl_pathv[0]);
+            safe_strncpy(hwmon_path, glob_result.gl_pathv[0], path_size);
             ret = 0;
          } else {
             OLOG_ERROR("hwmon path too long: %s", glob_result.gl_pathv[0]);
@@ -159,7 +160,7 @@ int ina3221_detect_device(char *sysfs_path, size_t path_size) {
                /* Found it! */
                size_t copy_len = strlen(hwmon_path);
                if (copy_len < path_size) {
-                  strcpy(sysfs_path, hwmon_path);
+                  safe_strncpy(sysfs_path, hwmon_path, path_size);
                   closedir(dir);
                   return 0;
                } else {
@@ -283,7 +284,7 @@ int ina3221_init(ina3221_device_t *dev) {
       memcpy(dev->device_name, device_name, copy_len);
       dev->device_name[copy_len] = '\0';
    } else {
-      strcpy(dev->device_name, "ina3221");
+      safe_strscpy(dev->device_name, "ina3221");
    }
 
    /* Initialize all channels */

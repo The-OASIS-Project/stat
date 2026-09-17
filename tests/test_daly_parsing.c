@@ -17,8 +17,10 @@
  * the project author(s).
  *
  * Unit tests for Daly BMS protocol frame parsing. Exercises the per-command
- * decoders (0x90, 0x91, 0x92, 0x93, 0x97, 0x98) plus checksum validation.
- * Operates entirely on in-memory byte arrays — no serial port required.
+ * decoders (0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x97, 0x98) plus checksum
+ * validation, including bounds-clamping of attacker/fault-controlled cell and
+ * sensor counts. Operates entirely on in-memory byte arrays — no serial port
+ * required.
  */
 
 #include <stdbool.h>
@@ -246,6 +248,82 @@ void test_checksum_detects_single_bit_tampering(void) {
    TEST_ASSERT_NOT_EQUAL(csum_good, csum_bad);
 }
 
+/* 0x94: System status — byte[0] cell count, byte[1] NTC count. Both are raw
+ * wire bytes and must be clamped to the fixed array capacities so a corrupt or
+ * hostile frame cannot overrun cell_mv[]/sensors_c[] downstream. */
+
+void test_parse_0x94_passes_through_valid_counts(void) {
+   uint8_t data[8] = { 16, 4, 0x01, 0x00, 0x00, 0, 0, 0 };
+   daly_status_t status = { 0 };
+   daly_parse_0x94(data, &status);
+   TEST_ASSERT_EQUAL_INT(16, status.cell_count);
+   TEST_ASSERT_EQUAL_INT(4, status.ntc_count);
+   TEST_ASSERT_TRUE(status.charger_present);
+   TEST_ASSERT_FALSE(status.load_present);
+}
+
+void test_parse_0x94_clamps_oversized_counts(void) {
+   /* A faulting/spoofed BMS reports 255 cells and 255 sensors. The frame
+    * checksums fine but the values are insane; clamp to the array capacities. */
+   uint8_t data[8] = { 0xFF, 0xFF, 0x00, 0x00, 0x00, 0, 0, 0 };
+   daly_status_t status = { 0 };
+   daly_parse_0x94(data, &status);
+   TEST_ASSERT_EQUAL_INT(DALY_MAX_CELLS, status.cell_count);
+   TEST_ASSERT_EQUAL_INT(DALY_MAX_TEMPS, status.ntc_count);
+}
+
+void test_parse_0x95_frames_valid_single_frame(void) {
+   /* frame_no 1 carries cells 1-3: three big-endian mV values. */
+   uint8_t frame[8] = { 0x01, 0x0D, 0x48, 0x0D, 0x49, 0x0D, 0x4A, 0x00 };
+   const uint8_t *frames[1] = { frame };
+   int cell_mv[DALY_MAX_CELLS] = { 0 };
+   daly_parse_0x95_frames(frames, 1, 3, cell_mv);
+   TEST_ASSERT_EQUAL_INT(3400, cell_mv[0]); /* 0x0D48 */
+   TEST_ASSERT_EQUAL_INT(3401, cell_mv[1]); /* 0x0D49 */
+   TEST_ASSERT_EQUAL_INT(3402, cell_mv[2]); /* 0x0D4A */
+}
+
+void test_parse_0x95_frames_clamps_and_preserves_adjacent_memory(void) {
+   /* Regression: an unclamped cell_count once ran memset()/cell_mv[] writes
+    * off the end of the fixed array. Lay a canary immediately after a
+    * DALY_MAX_CELLS buffer and pass a wildly oversized cell_count; the parser
+    * must clamp internally and leave the canary untouched. */
+   struct {
+      int cell_mv[DALY_MAX_CELLS];
+      int canary[16];
+   } buf;
+   for (size_t i = 0; i < sizeof(buf.canary) / sizeof(buf.canary[0]); i++) {
+      buf.canary[i] = 0x5A5A5A5A;
+   }
+   daly_parse_0x95_frames(NULL, 0, 255, buf.cell_mv);
+   for (size_t i = 0; i < sizeof(buf.canary) / sizeof(buf.canary[0]); i++) {
+      TEST_ASSERT_EQUAL_HEX32(0x5A5A5A5A, buf.canary[i]);
+   }
+}
+
+void test_parse_0x95_frames_oversized_frame_no_writes_nothing(void) {
+   /* A valid cell_count but a garbage frame_no: base_idx = (200-1)*3 = 597,
+    * so every per-cell store guard (base_idx+n < cell_count) must fail and
+    * write nothing — no index escapes the array via the frame number. */
+   struct {
+      int cell_mv[DALY_MAX_CELLS];
+      int canary[8];
+   } buf;
+   memset(buf.cell_mv, 0, sizeof(buf.cell_mv));
+   for (size_t i = 0; i < sizeof(buf.canary) / sizeof(buf.canary[0]); i++) {
+      buf.canary[i] = 0x5A5A5A5A;
+   }
+   uint8_t frame[8] = { 200, 0x0D, 0x48, 0x0D, 0x49, 0x0D, 0x4A, 0x00 };
+   const uint8_t *frames[1] = { frame };
+   daly_parse_0x95_frames(frames, 1, 6, buf.cell_mv);
+   for (int i = 0; i < DALY_MAX_CELLS; i++) {
+      TEST_ASSERT_EQUAL_INT(0, buf.cell_mv[i]);
+   }
+   for (size_t i = 0; i < sizeof(buf.canary) / sizeof(buf.canary[0]); i++) {
+      TEST_ASSERT_EQUAL_HEX32(0x5A5A5A5A, buf.canary[i]);
+   }
+}
+
 int main(void) {
    UNITY_BEGIN();
 
@@ -263,6 +341,13 @@ int main(void) {
 
    RUN_TEST(test_parse_0x93_mos_flags);
    RUN_TEST(test_parse_0x93_both_mosfets_on);
+
+   RUN_TEST(test_parse_0x94_passes_through_valid_counts);
+   RUN_TEST(test_parse_0x94_clamps_oversized_counts);
+
+   RUN_TEST(test_parse_0x95_frames_valid_single_frame);
+   RUN_TEST(test_parse_0x95_frames_clamps_and_preserves_adjacent_memory);
+   RUN_TEST(test_parse_0x95_frames_oversized_frame_no_writes_nothing);
 
    RUN_TEST(test_parse_0x97_no_cells_balancing);
    RUN_TEST(test_parse_0x97_cell_1_and_8_balancing);

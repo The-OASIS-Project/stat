@@ -44,14 +44,9 @@ static int daly_request(int fd,
                         const uint8_t *payload);
 
 /* Non-static parse helpers declared in daly_bms_internal.h for test access:
- * daly_checksum, daly_get_u16be, daly_parse_0x90/91/92/93/97/98 */
+ * daly_checksum, daly_get_u16be, daly_parse_0x90/91/92/93/94/95/97/98 */
 
 /* Parse helpers that remain file-local (not yet unit-tested) */
-static void daly_parse_0x94(const uint8_t *data, daly_status_t *status);
-static void daly_parse_0x95_frames(const uint8_t **frames,
-                                   int frame_count,
-                                   int cell_count,
-                                   int *cell_mv);
 static void daly_parse_0x96_frames(const uint8_t **frames,
                                    int frame_count,
                                    int ntc_count,
@@ -425,9 +420,25 @@ void daly_parse_0x93(const uint8_t *data, daly_mos_caps_t *mos) {
 /**
  * @brief Parse status from 0x94 command response
  */
-static void daly_parse_0x94(const uint8_t *data, daly_status_t *status) {
-   status->cell_count = data[0];
-   status->ntc_count = data[1];
+void daly_parse_0x94(const uint8_t *data, daly_status_t *status) {
+   /* cell_count/ntc_count are raw wire bytes (0-255). The checksum proves
+    * transport integrity, not semantic sanity: a faulting, miswired, or noisy
+    * BMS can report a count larger than our fixed-size arrays. Clamp at the
+    * source so every downstream consumer (cell_mv[DALY_MAX_CELLS],
+    * sensors_c[DALY_MAX_TEMPS], the frame-collection loops, MQTT publishing)
+    * is bounded by construction. Cells/sensors beyond the limit are dropped;
+    * warn once so a genuinely larger pack isn't silently under-reported. */
+   if (data[0] > DALY_MAX_CELLS || data[1] > DALY_MAX_TEMPS) {
+      static bool warned = false;
+      if (!warned) {
+         OLOG_WARNING("Daly BMS reported out-of-range counts (cells=%u, sensors=%u); "
+                      "clamping to %d/%d — extra cells/sensors are not reported.",
+                      (unsigned)data[0], (unsigned)data[1], DALY_MAX_CELLS, DALY_MAX_TEMPS);
+         warned = true;
+      }
+   }
+   status->cell_count = data[0] > DALY_MAX_CELLS ? DALY_MAX_CELLS : data[0];
+   status->ntc_count = data[1] > DALY_MAX_TEMPS ? DALY_MAX_TEMPS : data[1];
    status->charger_present = data[2] != 0;
    status->load_present = data[3] != 0;
    status->dio_bits = data[4];
@@ -436,10 +447,19 @@ static void daly_parse_0x94(const uint8_t *data, daly_status_t *status) {
 /**
  * @brief Parse cell voltages from multiple 0x95 frames
  */
-static void daly_parse_0x95_frames(const uint8_t **frames,
-                                   int frame_count,
-                                   int cell_count,
-                                   int *cell_mv) {
+void daly_parse_0x95_frames(const uint8_t **frames, int frame_count, int cell_count, int *cell_mv) {
+   /* Defensive: cell_mv is a fixed DALY_MAX_CELLS array. daly_parse_0x94()
+    * already clamps cell_count, but bound here too so this parser is safe
+    * regardless of caller. (0x96/0x97 instead bound each index inline against
+    * DALY_MAX_TEMPS/DALY_MAX_CELLS in their loops; same guarantee, and the
+    * per-index guards below back this clamp up the same way.) */
+   if (cell_count < 0) {
+      cell_count = 0;
+   }
+   if (cell_count > DALY_MAX_CELLS) {
+      cell_count = DALY_MAX_CELLS;
+   }
+
    /* Initialize cell voltages to zero */
    memset(cell_mv, 0, cell_count * sizeof(int));
 
@@ -909,8 +929,11 @@ int daly_bms_poll(daly_device_t *dev) {
       int frames_needed = (cell_count + 2) / 3; /* Ceiling division */
       const uint8_t *frames[16] = { 0 };
       int frame_count = 0;
+      const int max_frames = (int)(sizeof(frames) / sizeof(frames[0]));
 
-      for (int i = 0; i < 32 && frame_count < frames_needed; i++) {
+      /* frame_count is also bounded by the fixed frames[] capacity: never
+       * trust frames_needed alone to size a stack array. */
+      for (int i = 0; i < 32 && frame_count < frames_needed && frame_count < max_frames; i++) {
          result = daly_request(dev->fd, DALY_CMD_CELL_VOLTAGES, response, dev->timeout_ms, NULL);
          if (result == 0) {
             /* Check frame number */
@@ -946,8 +969,11 @@ int daly_bms_poll(daly_device_t *dev) {
       int frames_needed = (ntc_count + 6) / 7; /* Ceiling division */
       const uint8_t *frames[8] = { 0 };
       int frame_count = 0;
+      const int max_frames = (int)(sizeof(frames) / sizeof(frames[0]));
 
-      for (int i = 0; i < 16 && frame_count < frames_needed; i++) {
+      /* frame_count is also bounded by the fixed frames[] capacity: never
+       * trust frames_needed alone to size a stack array. */
+      for (int i = 0; i < 16 && frame_count < frames_needed && frame_count < max_frames; i++) {
          result = daly_request(dev->fd, DALY_CMD_TEMPERATURES, response, dev->timeout_ms, NULL);
          if (result == 0) {
             /* Check frame number */
@@ -1470,7 +1496,9 @@ bool daly_bms_is_balancing(const daly_device_t *dev) {
 
    const daly_data_t *data = &dev->data;
 
-   for (int i = 0; i < data->status.cell_count; i++) {
+   /* Bound against the array size, not just cell_count (clamped at 0x94) —
+    * no consumer should depend on a single upstream clamp. */
+   for (int i = 0; i < data->status.cell_count && i < DALY_MAX_CELLS; i++) {
       if (data->balance[i]) {
          return true;
       }

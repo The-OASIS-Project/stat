@@ -39,6 +39,8 @@ void daly_parse_0x90(const uint8_t *data, daly_pack_summary_t *pack);
 void daly_parse_0x91(const uint8_t *data, daly_extremes_t *extremes);
 void daly_parse_0x92(const uint8_t *data, daly_temps_t *temps);
 void daly_parse_0x93(const uint8_t *data, daly_mos_caps_t *mos);
+void daly_parse_0x94(const uint8_t *data, daly_status_t *status);
+void daly_parse_0x95_frames(const uint8_t **frames, int frame_count, int cell_count, int *cell_mv);
 void daly_parse_0x97(const uint8_t *data, int cell_count, bool *balance);
 void daly_parse_0x98(const uint8_t *data, char faults[][64], int *fault_count);
 
