@@ -28,6 +28,7 @@
 #include <errno.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <net/if_arp.h>
 #include <netinet/in.h>
 #include <netinet/ip_icmp.h>
 #include <poll.h>
@@ -169,27 +170,43 @@ static const char *kind_to_str(network_kind_t k) {
 /**
  * @brief Interface inclusion filter.
  *
- * Include only device-backed Ethernet-type interfaces (physical or USB), which
- * excludes lo, docker0, br-*, veth*, and l4tbr0 (no device symlink) and can0
- * (ARPHRD type != 1). Down physical NICs are kept.
+ * Admits interfaces worth reporting while excluding virtual clutter:
+ *  - PPP links (mobile-broadband/DSL dial-up) by ARPHRD_PPP — these are virtual
+ *    (no device symlink) but are real WAN interfaces.
+ *  - device-backed interfaces with a bound driver that are either ARPHRD_ETHER
+ *    (ethernet, wifi, RNDIS-tethered modems) OR a known cellular WAN driver
+ *    (qmi_wwan/cdc_mbim/cdc_ncm), whose raw-IP mode reports a non-ETHER type.
+ *
+ * Excludes lo, docker0, br-*, veth*, l4tbr0 (no device symlink), USB-gadget
+ * function ports (no bound driver), can0 (ARPHRD type != 1), and tun/wg VPN
+ * interfaces (virtual, non-PPP). Down physical NICs are kept.
  */
 static bool iface_included(const char *ifname) {
    if (strcmp(ifname, "lo") == 0) {
       return false;
    }
-   if (!sysfs_exists(ifname, "device")) {
-      return false; /* virtual: bridges, veth, docker, tegra bridge */
-   }
-   if (!sysfs_exists(ifname, "device/driver")) {
-      return false; /* USB-gadget function ports with no bound net driver */
-   }
-   char type[16];
+
    char path[256];
    snprintf(path, sizeof(path), "/sys/class/net/%s/type", ifname);
-   if (!read_sysfs_str(path, type, sizeof(type))) {
+   long type = read_sysfs_ll(path, -1);
+
+   /* PPP is virtual (no device symlink) but a real WAN link — admit by type. */
+   if (type == ARPHRD_PPP) {
+      return true;
+   }
+
+   /* Everything else must be device-backed with a bound driver. */
+   if (!sysfs_exists(ifname, "device") || !sysfs_exists(ifname, "device/driver")) {
       return false;
    }
-   return strcmp(type, "1") == 0; /* ARPHRD_ETHER */
+   if (type == ARPHRD_ETHER) {
+      return true;
+   }
+   /* Non-ETHER but device-backed: admit only known cellular WAN drivers
+    * (raw-IP qmi_wwan/cdc_mbim report ARPHRD_NONE/RAWIP, not ETHER). */
+   char driver[NET_DRIVER_LEN];
+   read_driver(ifname, driver, sizeof(driver));
+   return network_classify_kind(driver, false) == NET_KIND_CELLULAR;
 }
 
 /* ----------------------------------------------------------------------- */

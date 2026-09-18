@@ -162,6 +162,8 @@ void test_inet6_addrs_stable_only(void) {
 void test_classify_kind(void) {
    TEST_ASSERT_EQUAL_INT(NET_KIND_CELLULAR, network_classify_kind("rndis_host", false));
    TEST_ASSERT_EQUAL_INT(NET_KIND_CELLULAR, network_classify_kind("qmi_wwan", false));
+   TEST_ASSERT_EQUAL_INT(NET_KIND_CELLULAR, network_classify_kind("cdc_mbim", false));
+   TEST_ASSERT_EQUAL_INT(NET_KIND_CELLULAR, network_classify_kind("cdc_ncm", false));
    TEST_ASSERT_EQUAL_INT(NET_KIND_WIFI, network_classify_kind("rtl88x2ce", true));
    TEST_ASSERT_EQUAL_INT(NET_KIND_ETHERNET, network_classify_kind("r8168", false));
    TEST_ASSERT_EQUAL_INT(NET_KIND_UNKNOWN, network_classify_kind("", false));

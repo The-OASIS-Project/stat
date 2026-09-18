@@ -179,10 +179,15 @@ stable, 2 current-temporary, 9 temporary+deprecated). Parse `/proc/net/if_inet6`
 GUA/ULA** — exclude scope `0x20` (link-local), flags `0x20` (deprecated), and
 `0x01` (temporary). Prevents "what are our IPs" answering with dying privacy addrs.
 
-**Interface filter** (F-L3): include iff `/sys/class/net/<if>/device` symlink
-exists (physical/USB-backed — excludes `lo`, `docker0`, `br-*`, `veth*`,
-`l4tbr0`) **and** `type == 1` (ARPHRD_ETHER — excludes `can0` type 280). Keep
-**down** physical NICs (e.g. `wlP1p1s0`) — useful. Deny-list env override retained.
+**Interface filter** (F-L3): admit (a) `ARPHRD_PPP` links (dial-up/mobile-broadband
+PPP — virtual, no device symlink, but real WAN) and (b) device-backed interfaces
+with a bound driver that are either `ARPHRD_ETHER` (ethernet, wifi, RNDIS modems)
+or a known cellular WAN driver (`qmi_wwan`/`cdc_mbim`/`cdc_ncm`, whose raw-IP mode
+reports `ARPHRD_NONE`/`RAWIP`, not ETHER). Excludes `lo`, `docker0`, `br-*`,
+`veth*`, `l4tbr0` (no device symlink), USB-gadget ports (no bound driver), `can0`
+(type 280), and tun/wg VPN tunnels (virtual, non-PPP). Keep **down** physical NICs
+(e.g. `wlP1p1s0`). This keeps the module portable to non-Jetson Linux hosts whose
+WAN is PPP or a raw-IP QMI/MBIM modem rather than RNDIS.
 
 **`/proc/net/route` endianness** (F-parse): gateway/dest hex is the kernel
 printing raw `s_addr` with `%08X`. Assign `(in_addr_t)strtoul(hex,NULL,16)`
